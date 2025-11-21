@@ -1,0 +1,1 @@
+(&RistrettoPoint, &RistrettoPoint, &Option<usefulstructs::ProofSquareij>)
