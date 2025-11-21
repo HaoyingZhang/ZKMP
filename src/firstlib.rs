@@ -195,6 +195,44 @@ pub fn verify_square(
     res
 }
 
+pub fn calculate_inner_diff_commit<T: CryptoRng + RngCore>(
+    commitment: &Commit,
+    set: &Set,
+    rng: &mut T
+)->(Vec<RistrettoPoint>,Vec<RistrettoPoint>,Vec<Scalar>,Vec<Scalar>,Vec<Scalar>){
+
+    let c_pub = &commitment.c_;
+    let k = &commitment.k_;
+    let x = &commitment.x_;
+
+    let g = set.gen;
+    let h = set.h_;
+
+    let n = set.n_;
+
+    let mut c_diff: Vec<RistrettoPoint> = Vec::with_capacity(n*n);
+    let mut c_tilde : Vec<RistrettoPoint> = Vec::with_capacity(n*n);
+    let mut x_diff: Vec<Scalar> = Vec::with_capacity(n*n);
+    let mut k_diff: Vec<Scalar> = Vec::with_capacity(n*n);
+    let k_tilde = random_vec_scalar(rng, n*n);
+    
+    for i in 0..n{
+        for j in 0..n{
+            let c_ij = c_pub[i] - c_pub[j];
+            let x_ij = x[i] - x[j];
+            let k_ij = k[i] - k[j];
+            let k_ij_tilde = k_tilde[i*n+j];
+            let c_ij_tilde = x_ij * c_ij + k_ij_tilde * h;
+
+            c_tilde.push(c_ij_tilde);
+            x_diff.push(x_ij);
+            k_diff.push(k_ij);
+            c_diff.push(c_ij);
+        }
+    }
+    (c_diff, c_tilde, x_diff, k_diff, k_tilde)
+
+}
 
 pub fn measure_time_proof_square(
     ts: &Vec<Scalar>,
@@ -223,33 +261,8 @@ pub fn measure_time_proof_square(
         // ----------- General commit -------------- //
         let c: Commit = commit(&mut set, ts, &mut rng_k); // commit of device
 
-        let c_pub = &c.c_;
-        let k = &c.k_;
-        let x = &c.x_;
-        let g = set.gen;
-        let h = set.h_;
-        
-        // ----------- Local commit for the proof -------------- //
-        let k_tilde = random_vec_scalar(&mut rng, n*n);
-        let mut c_tilde : Vec<RistrettoPoint> = Vec::with_capacity(n*n);
-        let mut x_diff: Vec<Scalar> = Vec::with_capacity(n*n);
-        let mut k_diff: Vec<Scalar> = Vec::with_capacity(n*n);
-        let mut c_diff: Vec<RistrettoPoint> = Vec::with_capacity(n*n);
+        let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng);
 
-        for i in 0..n{
-            for j in 0..n{
-                let c_ij = c_pub[i] - c_pub[j];
-                let x_ij = x[i] - x[j];
-                let k_ij = k[i] - k[j];
-                let k_ij_tilde = k_tilde[i*n+j];
-                let c_ij_tilde = x_ij * c_ij + k_ij_tilde * h;
-
-                c_tilde.push(c_ij_tilde);
-                x_diff.push(x_ij);
-                k_diff.push(k_ij);
-                c_diff.push(c_ij);
-            }
-        }
         let duration_commit = start_commit.elapsed();
         time_commit = time_commit + duration_commit;
 
@@ -300,11 +313,25 @@ pub fn measure_time_proof_square(
 }
     
 
-// -----------------------------------------------------
+// ------------------- Proof distance ---------------------------
+// Zero knowledge proof to prove that the distances have been correctely commited without revealing the values
+// OR Proof: Y_1 = g^alpha or Y_2 = g^alpha
+// If Y_1 = g^alpha: 
+//      // simulate Y_2 = g^alpha
+//      z_2, c_2 <- random;
+//      r_2 = z_2 * g - c_2 * Y_2;
+//      // prove Y_1 = g^alpha
+//      r <- random;
+//      r_1 = g^r;
+//      c <- Hash(Y_1, Y_2, r_1, r_2, g);
+//      c_1 = c xor c_2;
+//      z_1 <- r + alpha*c_1
+//      return {r_1, r_2, c_1, c_2, z_1, z_2}
 
 pub fn proof_distance_bin_iju<T: CryptoRng + RngCore>(
-    diju: Scalar,          // public bit (0 or 1)
-    wiju: Scalar,          // witness for generator h
+    c_iju: &RistrettoPoint,      // Y_1  
+    c_iju_bis: &RistrettoPoint,  // Y_2
+    wiju: Scalar,          // alpha
     set: &Set,
     rng_proof: &mut T,
 ) -> ProofDistanceiju {
@@ -312,8 +339,6 @@ pub fn proof_distance_bin_iju<T: CryptoRng + RngCore>(
     let h = set.h_;        // RistrettoPoint
 
     // Commitment for this bit
-    let c_iju = g * diju + h * wiju;
-    let c_iju_bis = c_iju - g;
     let mut r1: RistrettoPoint = RistrettoPoint::identity();
     let mut r2: RistrettoPoint = RistrettoPoint::identity();
     let mut c1: Scalar = Scalar::ZERO;
@@ -323,8 +348,7 @@ pub fn proof_distance_bin_iju<T: CryptoRng + RngCore>(
     let mut c_chal: Scalar = Scalar::ZERO; 
 
     // verify which condition 
-    if c_iju == wiju * h {
-        // Schnorr on witness 'wiju' with base h:
+    if *c_iju == wiju * h {
         let r = random_scalar(rng_proof);   
         r1 = h * r;  
         z2 = random_scalar(rng_proof);
@@ -348,97 +372,46 @@ pub fn proof_distance_bin_iju<T: CryptoRng + RngCore>(
     ProofDistanceiju { r_1: r1, r_2: r2, c_1: c1, c_2: c2, response_1: z1, response_2: z2 }
 }
 
+// return vector of proofs for each u, for a given i,j
 pub fn proof_distance_bin_ij<T: CryptoRng + RngCore>(
     set: &Set,
-    i: usize,
-    j: usize,
+    c_ij: &[RistrettoPoint],
+    c_ij_bis: &[RistrettoPoint],
+    w_ij: &[Scalar],
     u: usize,
-    m: usize,
-    commitment: &Commit,
-    k_tilde: &[Scalar],
     rng_proof_distance: &mut T,
-) -> (Vec<ProofDistanceiju>, Vec<RistrettoPoint>) {
-
-    // private accumulators
-    let mut wij_private = Scalar::ZERO;
-    let mut dij_private = Scalar::ZERO;
-
-    let x = &commitment.x_;
-    let k = &commitment.k_;
-    let n = set.n_;
-    let g = set.gen;
-    let h = set.h_;
-
-    // let mut time_calculate_private_key    = Duration::ZERO;
-    // let t1 = Instant::now();
-    // accumulate over window m
-    for r in 0..m {
-        let xij = x[i + r] - x[j + r];
-        let kij = k[i + r] - k[j + r];
-        let k_tilde_ij = k_tilde[(i + r) * n + (j + r)];
-        wij_private += xij * kij + k_tilde_ij;
-        dij_private += xij * xij;
-    }
-
-    // dij in binary (u bits, Scalars 0/1)
-    let dij_bin = scalar_to_bits(&dij_private, u);
-
-    // sample u-1 random public shares for wij and set the last to match sum
-    let mut wij_pub: Vec<Scalar> = Vec::with_capacity(u);
-    for _ in 0..(u - 1) {
-        wij_pub.push(random_scalar(rng_proof_distance));
-    }
-    let first = lincomb_pow2(&wij_pub);
-    let denom = two_pow(u - 1); // 2^(u-1)
-    let last = (wij_private - first) * denom.invert(); // division with scalar
-    wij_pub.push(last);
-    // time_calculate_private_key += t1.elapsed();
-    // println!("{:?}", time_calculate_private_key);
-
-    // per-bit commitments and proofs
-    let mut d_ij_commit: Vec<RistrettoPoint> = Vec::with_capacity(u);
+) -> Vec<ProofDistanceiju> {
+    // per-bit proofs
     let mut proof_distance: Vec<ProofDistanceiju> = Vec::with_capacity(u);
 
-    // let mut time_calculate_commit_and_proof    = Duration::ZERO;
-    // let t1 = Instant::now();
     for bit in 0..u {
-        // per-bit commitment C_u = g*dij_bit + h*wij_pub[bit]
-        let c_u = dij_bin[bit] * g + wij_pub[bit] * h; 
-        d_ij_commit.push(c_u);
-
         // per-bit proof of knowledge of wij_pub[bit] in C_u
-        let proof = proof_distance_bin_iju(dij_bin[bit], wij_pub[bit], set, rng_proof_distance);
+        let proof = proof_distance_bin_iju(&c_ij[bit], &c_ij_bis[bit], w_ij[bit], &set, rng_proof_distance);
         proof_distance.push(proof);
     }
-    // time_calculate_commit_and_proof += t1.elapsed();
-    // println!("{:?}", time_calculate_commit_and_proof);
-
-    (proof_distance, d_ij_commit)
+    proof_distance
 }
 
 pub fn verify_distance_bin_ij(
-    _commitment: &Commit,                // not needed here
-    _i: usize,
-    _j: usize,
-    d_ij: &[RistrettoPoint],             // per-bit commitments C_u
+    c_ij: &[RistrettoPoint],
+    c_ij_bis: &[RistrettoPoint],          
     set: &Set,
     proofs: &[ProofDistanceiju],
 ) -> bool {
     let u = proofs.len();
-    if d_ij.len() != u { return false; }
 
     let g = set.gen;
     let h = set.h_;
 
     for idx in 0..u {
-        let res_1 = proofs[idx].response_1; //R1
-        let res_2 = proofs[idx].response_2; //R2
-        let r1  = proofs[idx].r_1; // r
-        let r2  = proofs[idx].r_2; // r_
+        let res_1 = proofs[idx].response_1; //z1
+        let res_2 = proofs[idx].response_2; //z2
+        let r1  = proofs[idx].r_1; // R1
+        let r2  = proofs[idx].r_2; // R2
         let c1  = proofs[idx].c_1; // c1
         let c2  = proofs[idx].c_2; // c2
-        let c_u = d_ij[idx]; // Diju
-        let c_u_bis = c_u - g; // Diju / g
+        let c_u = c_ij[idx]; // Y1
+        let c_u_bis = c_ij_bis[idx]; // Y2
 
         // Recompute challenge
         let c = chal_distance(&r1, &r2, &h, &c_u, &c_u_bis);
@@ -451,54 +424,52 @@ pub fn verify_distance_bin_ij(
 }
 
 // ---------------------------------------
-// Driver over all pairs
+// Proof over all pairs of i and j
 // ---------------------------------------
 pub fn proof_distance<T: CryptoRng + RngCore>(
     n: usize,
     m: usize,
     u: usize,
-    c: &Commit,
     set: &Set,
-    k_tilde: &[Scalar],
+    c_vec : &[&[RistrettoPoint]],
+    c_bis_vec : &[&[RistrettoPoint]],
+    w : &[&[Scalar]],
     rng_proof: &mut T,
-) -> (Vec<Option<Vec<ProofDistanceiju>>>, Vec<Option<Vec<RistrettoPoint>>>) {
-    let w = n - m + 1;
-    let mut proofs: Vec<Option<Vec<ProofDistanceiju>>> = Vec::with_capacity(w * w);
-    let mut dists:  Vec<Option<Vec<RistrettoPoint>>>   = Vec::with_capacity(w * w);
+) -> Vec<Option<Vec<ProofDistanceiju>>> {
+    let l = n - m + 1;
+    let mut proofs: Vec<Option<Vec<ProofDistanceiju>>> = Vec::with_capacity(l * l);
 
-    for i in 0..w {
-        for j in 0..w {
-            if i.abs_diff(j) <= m/2 {
+    for i in 0..l {
+        for j in 0..l {
+            if i.abs_diff(j) <= m/2 || j<i{
                 proofs.push(None);
-                dists.push(None);
                 continue;
             }
-            let (p_ij, d_ij) = proof_distance_bin_ij(set, i, j, u, m, c, k_tilde, rng_proof);
+            let p_ij = proof_distance_bin_ij(set, &c_vec[i*l+j], &c_bis_vec[i*l+j], &w[i*l+j], u, rng_proof);
             
             proofs.push(Some(p_ij));
-            dists.push(Some(d_ij));
         }
     }
-    (proofs, dists)
+    proofs
 }
 
 pub fn verify_distance(
+    c_vec: &[&[RistrettoPoint]],
+    c_bis_vec: &[&[RistrettoPoint]],
     n: usize,
     m: usize,
-    _commitment: &Commit,
-    dists: &[Option<&[RistrettoPoint]>],
     set: &Set,
     proofs: &[Option<&[ProofDistanceiju]>],
 ) -> bool {
-    let w = n - m + 1;
+    let l = n - m + 1;
     let mut res = true;
-    for i in 0..w {
-        for j in 0..w {
+    for i in 0..l {
+        for j in 0..l {
             if i.abs_diff(j) <= m/2 { continue; }
-            let idx = i * w + j;
-            match (dists[idx], proofs[idx]) {
-                (Some(dij_pts), Some(pij_proofs)) => {
-                    let ok = verify_distance_bin_ij(_commitment, i, j, dij_pts, set, pij_proofs);
+            let idx = i * l + j;
+            match proofs[idx] {
+                Some(pij_proofs) => {
+                    let ok = verify_distance_bin_ij(c_vec[i*l+j], c_bis_vec[i*l+j], set, pij_proofs);
                     res &= ok;
                 }
                 _ => {}
@@ -534,27 +505,74 @@ pub fn measure_time_proof_distance(
         // --- Commit ---
         let t1 = Instant::now();
         let c = commit(&mut set, ts, &mut rng_k);
-        time_commit += t1.elapsed();
 
+        // Computation of the local commitments
+        let l = n - m + 1;
+        
+        let g = set.gen;
+        let h = set.h_;
+
+        let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng_proof);
+        
+        let mut c_vec : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l*l);
+        let mut c_bis_vec : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l*l);
+        let mut w : Vec<Vec<Scalar>> = Vec::with_capacity(l*l);
+
+        for i in 0..l{
+            for j in 0..l{
+                let mut wij = Scalar::ZERO;
+                let mut dij = Scalar::ZERO;
+
+                // accumulate over window m
+                for r in 0..m {
+                    let xij = x_diff[(i + r) * n + (j + r)]; // x[i + r] - x[j + r];
+                    let kij = k_diff[(i + r) * n + (j + r)]; // k[i + r] - k[j + r];
+                    let k_tilde_ij = k_tilde[(i + r) * n + (j + r)];
+                    wij += xij * kij + k_tilde_ij;
+                    dij += xij * xij;
+                }
+                let dij_bin = scalar_to_bits(&dij, u);
+
+                // sample u-1 random public shares for wij and set the last to match sum
+                let mut wij_pub: Vec<Scalar> = Vec::with_capacity(u);
+                for _ in 0..(u - 1) {
+                    wij_pub.push(random_scalar(&mut rng_proof));
+                }
+                let first = lincomb_pow2(&wij_pub);
+                let denom = two_pow(u - 1); // 2^(u-1)
+                let last = (wij - first) * denom.invert(); // division with scalar
+                wij_pub.push(last);
+
+                let d_ij_vec: Vec<RistrettoPoint> = dij_bin.iter().zip(wij_pub.iter()).map(|(dij, wij)| dij * g + wij * h).collect();
+                let d_ij_bis_vec: Vec<RistrettoPoint> = d_ij_vec.iter().map(|d_ij| d_ij - g).collect();
+                
+                c_vec.push(d_ij_vec);
+                c_bis_vec.push(d_ij_bis_vec);
+                w.push(wij_pub); // push the wiju list
+            }
+        }
+        
+        let c_vec_refs: Vec<&[RistrettoPoint]> = c_vec.iter().map(|inner| inner.as_slice()).collect();
+        let c_bis_vec_refs: Vec<&[RistrettoPoint]> = c_bis_vec.iter().map(|inner| inner.as_slice()).collect();
+        let w_refs : Vec<&[Scalar]> = w.iter().map(|inner| inner.as_slice()).collect();
+
+        time_commit += t1.elapsed();
+        
         // --- Proof (distance) ---
-        let k_tilde = random_vec_scalar(&mut rng, n * n);
         let t2 = Instant::now();
-        let (proofs_owned, dists_owned) = proof_distance(n, m, u, &c, &set, &k_tilde, &mut rng_proof);
+        let proofs_owned = proof_distance(n, m, u, &set, &c_vec_refs, &c_bis_vec_refs, &w_refs, &mut rng_proof);
         time_proof_distance += t2.elapsed();
 
         // Convert owned Vec<Option<Vec<_>>> -> borrowed Vec<Option<&[_]>>
-        let dists_borrowed: Vec<Option<&[RistrettoPoint]>> =
-            dists_owned.iter().map(|opt| opt.as_deref()).collect();
-        let proofs_borrowed: Vec<Option<&[ProofDistanceiju]>> =
-            proofs_owned.iter().map(|opt| opt.as_deref()).collect();
+        let proofs_borrowed: Vec<Option<&[ProofDistanceiju]>> = proofs_owned.iter().map(|opt| opt.as_deref()).collect();
 
         // --- Verify (distance) ---
         let t3 = Instant::now();
-        let ok = verify_distance(n, m, &c, &dists_borrowed, &set, &proofs_borrowed);
+        let ok = verify_distance(&c_vec_refs, &c_bis_vec_refs, n, m, &set, &proofs_borrowed);
         time_verify_distance += t3.elapsed();
 
         // sanity check
-        // println!("{}", ok);
+        println!("{}", ok);
         debug_assert!(ok, "distance proof failed verification");
     }
 
