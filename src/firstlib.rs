@@ -1587,7 +1587,6 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
         }
     }
 
-
     println!("{:?}", list_relation);
     // deduce the first true relation from right
     while(list_relation[first]==false){
@@ -1721,20 +1720,27 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
             u[i] = r[i] + c[i] * alpha_view[i];
         }
     }
-    alpha_1_bit = epsilon_bin[1] - offset;
+    alpha_1_bit = epsilon_bin[1]-offset;
     let mut c_sum = Scalar::ZERO;
-    let mut true_ind = alpha_1_bit; 
+    let mut maybe_true_ind: Option<usize> = None;
 
     for ind in 0..alpha_1_bit {
         if list_relation[ind] {
-            true_ind = ind;
+            maybe_true_ind = Some(ind);
         } else {
             c_sum += c[ind];
         }
     }
 
-    c[true_ind] = c[alpha_1_bit] - c_sum;
-    u[true_ind] = r[true_ind] + c[true_ind] * alpha_view[true_ind];
+    if let Some(true_ind) = maybe_true_ind {
+        c[true_ind] = c[alpha_1_bit] - c_sum;
+        u[true_ind] = r[true_ind] + c[true_ind] * alpha_view[true_ind];
+    } else {
+        // No real index in this block => all are simulated.
+        // Do NOT touch u[...] here; keep them simulated.
+        // If you still need the block constraint c[alpha_1_bit] = sum(left..right-1),
+        // you must have enforced it earlier using only simulated c's.
+    }
 
 
     return ZKthresholdi{commitments: rr, challenges: c, responses: u};
