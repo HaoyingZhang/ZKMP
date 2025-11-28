@@ -24,14 +24,14 @@ fn main() {
 
     let m: usize = 100;
     let l = n.checked_sub(m).and_then(|x| x.checked_add(1)).expect("n must be >= m - 1");
-    let iter: usize = 1;
+    let iter: usize = 10;
     let threshold = 20;
     
     // measure_time_proof_square(&ts_scalar,n, m, iter);
 
-    measure_time_proof_distance(upper,n,m,u,iter);
+    // measure_time_proof_distance(upper,n,m,u,iter);
 
-    // measure_time_proof_MPD(&ts_scalar, n, m, u, iter);
+    measure_time_proof_MPD(upper, n, m, u, iter);
 
     // measure_time_exist_bin(&ts_scalar, n, m, u, iter);
 
@@ -74,8 +74,15 @@ pub fn measure_time_no_similarity(
 
         let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng_proof);
         
-        
         let (c_vec, c_bis_vec, w) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
+
+        // MPD
+        let mpd      = compute_mpd_with_window_scalar(&ts, m);
+        let mpd_bin: Vec<Vec<Scalar>> = mpd.iter().map(|x| scalar_to_bits(x, u)).collect();
+
+        let (m_vec, m_bis_vec, z_vec) = calculate_mpd_commit(&g, &h, mpd_bin, u, &mut rng_proof);
+
+
         
         let c_vec_refs: Vec<&[RistrettoPoint]> = c_vec.iter().map(|inner| inner.as_slice()).collect();
         let c_bis_vec_refs: Vec<&[RistrettoPoint]> = c_bis_vec.iter().map(|inner| inner.as_slice()).collect();
@@ -83,7 +90,7 @@ pub fn measure_time_no_similarity(
 
         let t1 = Instant::now();
 
-        
+
         time_commit += t1.elapsed();
     
     }
