@@ -607,21 +607,63 @@ pub fn measure_time_proof_distance(
     println!("Verify:  {:?}", avg_verify);
 }
 
-// -----------------------------------------------------------
+
+//  M_iu = g ^ MPD_iu * h ^ z_iu
+pub fn calculate_mpd_commit<T: CryptoRng + RngCore>(
+    g: &RistrettoPoint,
+    h: &RistrettoPoint,
+    mpd: Vec<Vec<Scalar>>, // (MPDi) encoded in binary
+    u: usize,
+    rng_proof: &mut T,
+) -> (Vec<Vec<RistrettoPoint>>, Vec<Vec<RistrettoPoint>>, Vec<Vec<Scalar>>) {
+
+    let l = mpd.len();
+
+    let mut z_vec: Vec<Vec<Scalar>> = Vec::with_capacity(l); // secret keys of (MPDi)
+    let mut m_vec: Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l); // commitments of (MPDi) -> (M_iu)
+    let mut m_bis_vec: Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l); // commitments of (MPDi) -> (M_iu/g)
+
+    for i in 0..l {
+        let mpd_i = &mpd[i];
+
+        // Random z-values
+        let zi_pub: Vec<Scalar> = (0..u).map(|_| random_scalar(rng_proof)).collect();
+        z_vec.push(zi_pub.clone());
+
+        // Commitments
+        let mut mpd_i_commit: Vec<RistrettoPoint> = Vec::with_capacity(u);
+        let mut mpd_i_commit_bis: Vec<RistrettoPoint> = Vec::with_capacity(u);
+
+        for bit in 0..u {
+            let m_iu = *g * mpd_i[bit] + *h * zi_pub[bit];
+            mpd_i_commit.push(m_iu);
+
+            // m' = m - g
+            let m_iu_bis = m_iu - *g;
+            mpd_i_commit_bis.push(m_iu_bis);
+        }
+
+        m_vec.push(mpd_i_commit);
+        m_bis_vec.push(mpd_i_commit_bis);
+    }
+
+    (m_vec, m_bis_vec, z_vec)
+}
+
+
+// ------------------- Proof MPD bin ---------------------------
+// Zero knowledge proof to prove that the MPD have been correctely commited in binary without revealing the values
+// OR proof: secret: z_iu 
+//  M_iu = h^z_iu or M_iu/g = h^z_iu
 
 pub fn proof_mpd_bin_iu<T: CryptoRng + RngCore>(
-    mpd_iu: Scalar,      // public bit (0 or 1)
-    ziu: Scalar,         // witness for generator h
-    set: &Set,
+    h: &RistrettoPoint,
+    m_iu: RistrettoPoint,
+    m_iu_bis: RistrettoPoint,      
+    ziu: Scalar,     
     rng_proof: &mut T,
 ) -> ProofMPDBiniu {
-    let g = set.gen;
-    let h = set.h_;
-
-    let m_iu      = g * mpd_iu + h * ziu;
-    let m_iu_bis  = m_iu - g;         
-
-    // Pre-init to avoid shadowing
+    
     let mut r1: RistrettoPoint = RistrettoPoint::identity();
     let mut r2: RistrettoPoint = RistrettoPoint::identity();
     let mut c1: Scalar = Scalar::ZERO;
@@ -630,14 +672,14 @@ pub fn proof_mpd_bin_iu<T: CryptoRng + RngCore>(
     let mut z2: Scalar = Scalar::ZERO;
 
     // Choose which half to simulate based on whether the bit is 0 or 1
-    if m_iu == h * ziu {
+    if m_iu == *h * ziu {
         // mpd_iu == 0 branch (simulate the other half)
         let r = random_scalar(rng_proof);
         r1 = h * r;
 
         z2 = random_scalar(rng_proof);
         c2 = random_scalar(rng_proof);
-        r2 = h * z2 - c2 * m_iu;
+        r2 = h * z2 - c2 * m_iu_bis;
 
         let c_chal = chal_distance(&r1, &r2, &h, &m_iu, &m_iu_bis);
         c1 = c_chal - c2;
@@ -659,35 +701,24 @@ pub fn proof_mpd_bin_iu<T: CryptoRng + RngCore>(
 }
 
 pub fn proof_mpd_bin_i<T: CryptoRng + RngCore>(
-    set: &Set,
-    mpd_i_bin: &[Scalar],          // length u, bits in {0,1} as Scalars
+    h: &RistrettoPoint,
+    m_i: &[RistrettoPoint],      
+    m_i_bis: &[RistrettoPoint],
+    z_i: &[Scalar],
     u: usize,
     rng_proof: &mut T,
-) -> (Vec<ProofMPDBiniu>, Vec<RistrettoPoint>) {
-    let g = set.gen;
-    let h = set.h_;                // <-- fixed
-
-    // fresh witnesses per bit
-    let mut zi_pub: Vec<Scalar> = (0..u).map(|_| random_scalar(rng_proof)).collect();
-
-    let mut mpd_i_commit: Vec<RistrettoPoint> = Vec::with_capacity(u);
+) -> Vec<ProofMPDBiniu> {             
     let mut proof_mpd_i:  Vec<ProofMPDBiniu>   = Vec::with_capacity(u);
-
     for bit in 0..u {
-        let c_u = g * mpd_i_bin[bit] + h * zi_pub[bit];
-        mpd_i_commit.push(c_u);
-
-        // ZK proof of knowledge of zi_pub[bit] consistent with C_u
-        let proof = proof_mpd_bin_iu(mpd_i_bin[bit], zi_pub[bit], set, rng_proof);
+        let proof = proof_mpd_bin_iu(h, m_i[bit], m_i_bis[bit], z_i[bit], rng_proof);
         proof_mpd_i.push(proof);
     }
-
-    (proof_mpd_i, mpd_i_commit)
+    proof_mpd_i
 }
 
 
 pub fn verify_MPD_bin_i(
-    m_i: &[RistrettoPoint],          // commitments per bit
+    m_i: &[RistrettoPoint],  
     set: &Set,
     proofs: &[ProofMPDBiniu],
 ) -> bool {
@@ -719,33 +750,32 @@ pub fn verify_MPD_bin_i(
 }
 
 pub fn proof_MPD_bin<T: CryptoRng + RngCore>(
-    mpd_bin: &[&[Scalar]],            // length w, each is length u bits
+    m_vec: &[Vec<RistrettoPoint>],           
+    m_bis_vec: &[Vec<RistrettoPoint>],    
+    z_vec: &[Vec<Scalar>],
     n: usize,
     m: usize,
     u: usize,
-    set: &Set,
+    h: &RistrettoPoint,
     rng_proof: &mut T,
-) -> (Vec<Option<Vec<ProofMPDBiniu>>>, Vec<Option<Vec<RistrettoPoint>>>) {
+) -> Vec<Vec<ProofMPDBiniu>> {
     let w = n - m + 1;
 
-    let mut proofs: Vec<Option<Vec<ProofMPDBiniu>>> = Vec::with_capacity(w);
-    let mut commits: Vec<Option<Vec<RistrettoPoint>>> = Vec::with_capacity(w);
+    let mut proofs: Vec<Vec<ProofMPDBiniu>> = Vec::with_capacity(w);
 
     for i in 0..w {
-        let (p_i, m_i) = proof_mpd_bin_i(set, mpd_bin[i], u, rng_proof);
-        proofs.push(Some(p_i));
-        commits.push(Some(m_i));
+        let p_i = proof_mpd_bin_i(h, &m_vec[i], &m_bis_vec[i], &z_vec[i], u, rng_proof);
+        proofs.push(p_i);
     }
-    (proofs, commits)
+    proofs
 }
 
 pub fn verify_MPD_bin(
     n: usize,
     m: usize,
-    _commitment: &Commit,
-    commits_opt: &[Option<&[RistrettoPoint]>],
+    commits_opt: &Vec<Vec<RistrettoPoint>>,
     set: &Set,
-    proofs_opt: &[Option<&[ProofMPDBiniu]>],
+    proofs_opt: &Vec<Vec<ProofMPDBiniu>>,
 ) -> bool {
     let w = n - m + 1;
     debug_assert_eq!(commits_opt.len(), w);
@@ -753,18 +783,18 @@ pub fn verify_MPD_bin(
 
     let mut res = true;
     for i in 0..w {
-        match (commits_opt[i], proofs_opt[i]) {
-            (Some(commits_i), Some(proofs_i)) => {
-                res &= verify_MPD_bin_i(commits_i, set, proofs_i);
-            }
-            _ => { /* if you ever store None, mirror it here */ }
+        let commits_i = &commits_opt[i];
+        let proofs_i = &proofs_opt[i];
+        res &= verify_MPD_bin_i(&commits_i, set, &proofs_i);
+        if res==false{
+            println!("Error at i = {}", i);
         }
     }
     res
 }
 
 pub fn measure_time_proof_MPD(
-    ts: &[Scalar],
+    upper: usize,
     n: usize,
     m: usize,
     u: usize,
@@ -780,10 +810,11 @@ pub fn measure_time_proof_MPD(
         let mut rng_k = OsRng;
         let mut rng_proof = OsRng;
 
+        let ts = random_ecg(&mut rng, n, upper);
+
         // Compute MPD and bit-decompose (u bits per index)
         let mpd      = compute_mpd_with_window_scalar(&ts, m);
-        let mpd_binv: Vec<Vec<Scalar>> = mpd.iter().map(|x| scalar_to_bits(x, u)).collect();
-        let mpd_bin:  Vec<&[Scalar]>   = mpd_binv.iter().map(|v| v.as_slice()).collect();
+        let mpd_bin: Vec<Vec<Scalar>> = mpd.iter().map(|x| scalar_to_bits(x, u)).collect();
 
         // Setup
         let t0 = Instant::now();
@@ -793,24 +824,22 @@ pub fn measure_time_proof_MPD(
         // Commit (not used by these MPD proofs but kept for parity)
         let t1 = Instant::now();
         let c = commit(&mut set, &ts.to_vec(), &mut rng_k);
+        let g = set.gen;
+        let h = set.h_;
+        let (m_vec, m_bis_vec, z_vec) = calculate_mpd_commit(&g, &h, mpd_bin, u, &mut rng_proof);
         time_commit += t1.elapsed();
 
         // Prove MPD bits
         let t2 = Instant::now();
-        let (proofs_owned, commits_owned) = proof_MPD_bin(&mpd_bin, n, m, u, &set, &mut rng_proof);
+        let proofs_owned = proof_MPD_bin(&m_vec, &m_bis_vec, &z_vec, n, m, u, &h, &mut rng_proof);
         time_proof_mpd += t2.elapsed();
-
-        // Borrow for verify
-        let commits_borrowed: Vec<Option<&[RistrettoPoint]>> =
-            commits_owned.iter().map(|opt| opt.as_deref()).collect();
-        let proofs_borrowed: Vec<Option<&[ProofMPDBiniu]>> =
-            proofs_owned.iter().map(|opt| opt.as_deref()).collect();
 
         // Verify
         let t3 = Instant::now();
-        let ok = verify_MPD_bin(n, m, &c, &commits_borrowed, &set, &proofs_borrowed);
+        let ok = verify_MPD_bin(n, m, &m_vec, &set, &proofs_owned);
         time_verify_mpd += t3.elapsed();
 
+        println!("{}", ok);
         debug_assert!(ok, "MPD bit proof failed verification");
     }
 
@@ -822,7 +851,7 @@ pub fn measure_time_proof_MPD(
     println!("Verify:  {:?}", time_verify_mpd / it);
 }
 
-// ----------------------
+// --------- MPD Exist ---- //
 pub fn proof_exist_bin<T: CryptoRng + RngCore>(
     set: &Set,
     l: usize,                  // length in bits
