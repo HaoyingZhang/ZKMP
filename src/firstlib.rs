@@ -857,16 +857,16 @@ pub fn proof_exist_bin<T: CryptoRng + RngCore>(
     l: usize,                  // length in bits
     a: usize,                  // length of matrix profile
     m_i: &[RistrettoPoint],    // Pedersen commitments of MPD_i bits
-    d_ij: &[RistrettoPoint],   // Pedersen commitments of distances s_i and s_j (flattened: a * l)
+    d_ij: &[&[RistrettoPoint]],   // Pedersen commitments of distances s_i and s_j (flattened: a * l)
     z_i: &[Scalar],            // openings for m_i
-    w_ij: &[Scalar],           // openings for d_ij (flattened: a * l)
+    w_ij: &[&[Scalar]],           // openings for d_ij (flattened: a * l)
     rng_proof: &mut T,
 ) -> ProofExistij {
     // --- Basic sanity checks ---
     debug_assert_eq!(m_i.len(), l, "m_i must have length l");
     debug_assert_eq!(z_i.len(), l, "z_i must have length l");
-    debug_assert_eq!(d_ij.len(), a * l, "d_ij must have length a * l");
-    debug_assert_eq!(w_ij.len(), a * l, "w_ij must have length a * l");
+    debug_assert_eq!(d_ij.len(), a, "d_ij must have length a * l");
+    debug_assert_eq!(w_ij.len(), a, "w_ij must have length a * l");
 
     let h = set.h_;
 
@@ -885,8 +885,8 @@ pub fn proof_exist_bin<T: CryptoRng + RngCore>(
         let mut is_j = true;
 
         for u in 0..l {
-            let alpha_u = z_i[u] - w_ij[j * l + u];
-            let y_u     = m_i[u] - d_ij[j * l + u];
+            let alpha_u = z_i[u] - w_ij[j][u];
+            let y_u     = m_i[u] - d_ij[j][u];
 
             if y_u != h * alpha_u {
                 is_j = false;
@@ -907,8 +907,8 @@ pub fn proof_exist_bin<T: CryptoRng + RngCore>(
         if j == index_j_star {
             // Real proof branch
             for u in 0..l {
-                let alpha_u = z_i[u] - w_ij[j * l + u];
-                let y_u     = m_i[u] - d_ij[j * l + u];
+                let alpha_u = z_i[u] - w_ij[j][u];
+                let y_u     = m_i[u] - d_ij[j][u];
 
                 y_i.push(y_u);
 
@@ -931,8 +931,8 @@ pub fn proof_exist_bin<T: CryptoRng + RngCore>(
             c_accum += c_j;
 
             for u in 0..l {
-                let alpha_u = z_i[u] - w_ij[j * l + u];
-                let y_u     = m_i[u] - d_ij[j * l + u];
+                let alpha_u = z_i[u] - w_ij[j][u];
+                let y_u     = m_i[u] - d_ij[j][u];
 
                 y_i.push(y_u);
 
@@ -959,7 +959,7 @@ pub fn proof_exist_bin<T: CryptoRng + RngCore>(
 
     // --- 4. Finalize real responses z for j* ---
     for u in 0..l {
-        let alpha_u      = z_i[u] - w_ij[index_j_star * l + u];
+        let alpha_u      = z_i[u] - w_ij[index_j_star][u];
         let res_j_star_u = alea_buffer[u] + alpha_u * c_j_star;
         res_i[index_j_star * l + u] = res_j_star_u;
     }
@@ -968,7 +968,7 @@ pub fn proof_exist_bin<T: CryptoRng + RngCore>(
 
 pub fn verify_exist_bin(
     m_i: &[RistrettoPoint],
-    d_ij: &[RistrettoPoint],
+    d_ij: &[&[RistrettoPoint]],
     l: usize, // length of bits
     a: usize, // length of m_i
     set: &Set,
@@ -980,7 +980,7 @@ pub fn verify_exist_bin(
     let mut g_i : Vec<RistrettoPoint> = Vec::with_capacity(a*l);
     for j in 0..a{
         for u in 0..l{
-            let y_u = m_i[u] - d_ij[j*l+u];
+            let y_u = m_i[u] - d_ij[j][u];
             y_i.push(y_u);
             g_i.push(h);
             let r_i = proofs_exist.r_i[j*l+u];
@@ -1002,7 +1002,7 @@ pub fn verify_exist_bin(
 }
 
 pub fn measure_time_exist_bin(
-    x: &[Scalar],
+    upper: usize,
     n: usize,
     m: usize,
     u: usize,
@@ -1021,13 +1021,7 @@ pub fn measure_time_exist_bin(
         let mut rng_proof  = OsRng;
         let mut rng_dist   = OsRng;
 
-        // --- Compute MPD and bit-decompose (u bits per index) ---
-        let ts = x; // alias
-        let mpd = compute_mpd_with_window_scalar(ts, m);
-        let mpd_binv: Vec<Vec<Scalar>> = mpd.iter().map(|val| scalar_to_bits(val, u)).collect();
-        let mpd_bin: Vec<&[Scalar]> = mpd_binv.iter().map(|v| v.as_slice()).collect();
-
-        let k_tilde = random_vec_scalar(&mut rng, n * n);
+        let ts = random_ecg(&mut rng, n, upper); 
 
         // --- Setup ---
         let t0 = Instant::now();
@@ -1037,11 +1031,6 @@ pub fn measure_time_exist_bin(
         // --- Commit (kept for parity) ---
         let t1 = Instant::now();
         let commitment = commit(&mut set, &ts.to_vec(), &mut rng_k);
-        time_commit += t1.elapsed();
-
-        // Per-iteration accumulated time for all i
-        let mut time_proof_iter  = Duration::ZERO;
-        let mut time_verify_iter = Duration::ZERO;
 
         let x = &commitment.x_;
         let k = &commitment.k_;
@@ -1049,92 +1038,65 @@ pub fn measure_time_exist_bin(
         let g = set.gen;
         let h = set.h_;
 
-        // --- For each i: build commitments and run proof/verify ---
-        for i in 0..a {
-            // M_i = Com(mpd_i in binary)
-            let mpd_i_bin = mpd_bin[i]; // length u
+        // calculate commit
+        let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&commitment, &set, &mut rng_proof);
+        
+        let (d_vec, _, w) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
 
-            // public randomness for M_i
-            let zi_pub: Vec<Scalar> = (0..u).map(|_| random_scalar(&mut rng_proof)).collect();
+        // MPD
+        let mpd      = compute_mpd_with_window_scalar(&ts, m);
+        let mpd_bin: Vec<Vec<Scalar>> = mpd.iter().map(|x| scalar_to_bits(x, u)).collect();
 
-            let m_i: Vec<RistrettoPoint> = (0..u).map(|bit| g * mpd_i_bin[bit] + h * zi_pub[bit]).collect();
+        let (m_vec, _, z_vec) = calculate_mpd_commit(&g, &h, mpd_bin, u, &mut rng_proof);
 
-            let mut d_ij: Vec<RistrettoPoint> = Vec::with_capacity(a * u);
-            let mut w_ij: Vec<Scalar>         = Vec::with_capacity(a * u);
+        let m_vec_refs: Vec<&[RistrettoPoint]> = m_vec.iter().map(|inner| inner.as_slice()).collect();
+        let z_vec_refs: Vec<&[Scalar]> = z_vec.iter().map(|inner| inner.as_slice()).collect();
+        let d_vec_refs: Vec<&[RistrettoPoint]> = d_vec.iter().map(|inner| inner.as_slice()).collect();
+        let w_refs : Vec<&[Scalar]> = w.iter().map(|inner| inner.as_slice()).collect();
 
-            for j in 0..a {
-                let mut wij_private = Scalar::ZERO;
-                let mut dij_private = Scalar::ZERO;
-            
-                // compute distance and masked distance between subsequences
-                for r in 0..m {
-                    let xij = x[i + r] - x[j + r];
-                    let kij = k[i + r] - k[j + r];
-                    let k_tilde_ij = k_tilde[(i + r) * n + (j + r)];
-            
-                    wij_private += xij * kij + k_tilde_ij;
-                    dij_private += xij * xij;
-                }
-            
-                // dij in binary (u bits, Scalars 0/1)
-                let dij_bin = scalar_to_bits(&dij_private, u);
-            
-                // sample u-1 random public shares for wij and set the last to match sum
-                let mut wij_pub: Vec<Scalar> = Vec::with_capacity(u);
-                for _ in 0..(u - 1) {
-                    wij_pub.push(random_scalar(&mut rng_dist));
-                }
-            
-                let first = lincomb_pow2(&wij_pub);   // sum_{b=0..u-2} wij_pub[b] * 2^b
-                let denom = two_pow(u - 1);          // 2^(u-1)
-                let last  = (wij_private - first) * denom.invert();
-                wij_pub.push(last);                  // length u
-            
-                for share in &wij_pub {
-                    w_ij.push(*share);
-                }
-            
-                // commitments for each bit of dij using wij_pub as openings
-                let d_ij_commit: Vec<RistrettoPoint> = (0..u).map(|bit| dij_bin[bit] * g + wij_pub[bit] * h).collect();
-            
-                for dij in d_ij_commit {
-                    d_ij.push(dij);
-                }
-            }
+        time_commit += t1.elapsed();
 
-            // --- Proof ---
+        // Proof
+        let mut time_proof_iter  = Duration::ZERO;
+        let mut time_verify_iter = Duration::ZERO;
+        let mut res = true;
+        for i in 0..a{
+            let m_i = m_vec_refs[i];
+            let d_ij = &d_vec_refs[i*a .. i*a + a];
+            let zi_pub = z_vec_refs[i];
+            let w_ij = &w_refs[i*a .. i*a+a];
+
             let t_proof = Instant::now();
             let proof_existence = proof_exist_bin(
                 &set,
                 u,     
                 a,
                 &m_i,
-                &d_ij,
+                d_ij,
                 &zi_pub,
-                &w_ij,
-                &mut rng_proof,
+                w_ij,
+                &mut rng_proof
             );
+
             time_proof_iter += t_proof.elapsed();
 
             // --- Verify ---
             let t_verify = Instant::now();
-            let res = verify_exist_bin(&m_i, &d_ij, u, a, &set, &proof_existence);
-            time_verify_iter += t_verify.elapsed();
-
-            println!("{:?}", res);
-            debug_assert!(res, "verify_exist_bin failed for i = {}", i);
+            res &= verify_exist_bin(&m_i, d_ij, u, a, &set, &proof_existence);
+            time_verify_iter += t_verify.elapsed(); 
         }
-
+        println!("{:?}", res);
+        debug_assert!(res, "verify_exist_bin failed ");
         // accumulate over all iterations
         time_proof_mpd  += time_proof_iter;
         time_verify_mpd += time_verify_iter;
     }
 
     println!("Total over {} iterations:", iter);
-    println!("  setup:        {:?}", time_setup);
-    println!("  commit:       {:?}", time_commit);
-    println!("  proof (MPD):  {:?}", time_proof_mpd);
-    println!("  verify (MPD): {:?}", time_verify_mpd);
+    println!("  setup:        {:?}", time_setup/(iter as u32));
+    println!("  commit:       {:?}", time_commit/(iter as u32));
+    println!("  proof (MPD):  {:?}", time_proof_mpd/(iter as u32));
+    println!("  verify (MPD): {:?}", time_verify_mpd/(iter as u32));
 }
 
 // --------------------------
