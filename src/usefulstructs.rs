@@ -80,3 +80,9 @@ pub struct ZKmin{
     pub challenges: Vec<Scalar>,
     pub responses: Vec<Scalar>,
 }
+
+pub struct ZKthresholdi{
+    pub commitments: Vec<RistrettoPoint>,
+    pub challenges: Vec<Scalar>,
+    pub responses: Vec<Scalar>
+}

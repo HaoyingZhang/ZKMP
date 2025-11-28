@@ -13,7 +13,7 @@ use std::fs;
 use std::io::Read;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use crate::usefulstructs::*;
-use crate::usefulfuncs::{random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
+use crate::usefulfuncs::{random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
 // TODO: Write functions to calculate new commitements, like M and D from commitment ts
 
 // Generate a setup set:
@@ -232,6 +232,60 @@ pub fn calculate_inner_diff_commit<T: CryptoRng + RngCore>(
     }
     (c_diff, c_tilde, x_diff, k_diff, k_tilde)
 
+}
+
+pub fn calculate_dist_commit<T: CryptoRng + RngCore>(
+    rng_proof: &mut T,
+    n: usize,
+    m: usize,
+    u: usize,
+    g: RistrettoPoint,
+    h: RistrettoPoint,
+    x_diff: &[Scalar],
+    k_diff: &[Scalar],
+    k_tilde: &[Scalar],
+)->(Vec<Vec<RistrettoPoint>>, Vec<Vec<RistrettoPoint>>, Vec<Vec<Scalar>>){
+    // number of subsequences
+    let l = n - m + 1;
+        
+    let mut c_vec : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l*l);
+    let mut c_bis_vec : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l*l);
+    let mut w : Vec<Vec<Scalar>> = Vec::with_capacity(l*l);
+
+    for i in 0..l{
+        for j in 0..l{
+            let mut wij = Scalar::ZERO;
+            let mut dij = Scalar::ZERO; // compute only once, never used after in other proofs
+
+            // accumulate over window m
+            for r in 0..m {
+                let xij = x_diff[(i + r) * n + (j + r)]; // x[i + r] - x[j + r];
+                let kij = k_diff[(i + r) * n + (j + r)]; // k[i + r] - k[j + r];
+                let k_tilde_ij = k_tilde[(i + r) * n + (j + r)];
+                wij += xij * kij + k_tilde_ij;
+                dij += xij * xij;
+            }
+            let dij_bin = scalar_to_bits(&dij, u);
+
+            // sample u-1 random public shares for wij and set the last to match sum
+            let mut wij_pub: Vec<Scalar> = Vec::with_capacity(u);
+            for _ in 0..(u - 1) {
+                wij_pub.push(random_scalar(rng_proof));
+            }
+            let first = lincomb_pow2(&wij_pub);
+            let denom = two_pow(u - 1); // 2^(u-1)
+            let last = (wij - first) * denom.invert(); // division with scalar
+            wij_pub.push(last);
+
+            let d_ij_vec: Vec<RistrettoPoint> = dij_bin.iter().zip(wij_pub.iter()).map(|(dij, wij)| dij * g + wij * h).collect();
+            let d_ij_bis_vec: Vec<RistrettoPoint> = d_ij_vec.iter().map(|d_ij| d_ij - g).collect();
+            
+            c_vec.push(d_ij_vec);
+            c_bis_vec.push(d_ij_bis_vec);
+            w.push(wij_pub); // push the wiju list
+        }
+    }
+    return (c_vec, c_bis_vec, w) // (D_iju), (D_iju/g), (w_iju)
 }
 
 pub fn measure_time_proof_square(
@@ -480,7 +534,7 @@ pub fn verify_distance(
 }
 
 pub fn measure_time_proof_distance(
-    ts: &Vec<Scalar>,
+    upper: usize,
     n: usize,
     m: usize,
     u: usize,
@@ -502,55 +556,19 @@ pub fn measure_time_proof_distance(
         let mut set = setup(n, &mut rng);
         time_setup += t0.elapsed();
 
-        // --- Commit ---
-        let t1 = Instant::now();
-        let c = commit(&mut set, ts, &mut rng_k);
+        // --- Random TS ---
+        let ts = random_ecg(&mut rng, n, upper);
 
-        // Computation of the local commitments
-        let l = n - m + 1;
+        // --- Commit ---
+        let c = commit(&mut set, &ts, &mut rng_k);
         
         let g = set.gen;
         let h = set.h_;
 
         let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng_proof);
         
-        let mut c_vec : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l*l);
-        let mut c_bis_vec : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l*l);
-        let mut w : Vec<Vec<Scalar>> = Vec::with_capacity(l*l);
-
-        for i in 0..l{
-            for j in 0..l{
-                let mut wij = Scalar::ZERO;
-                let mut dij = Scalar::ZERO;
-
-                // accumulate over window m
-                for r in 0..m {
-                    let xij = x_diff[(i + r) * n + (j + r)]; // x[i + r] - x[j + r];
-                    let kij = k_diff[(i + r) * n + (j + r)]; // k[i + r] - k[j + r];
-                    let k_tilde_ij = k_tilde[(i + r) * n + (j + r)];
-                    wij += xij * kij + k_tilde_ij;
-                    dij += xij * xij;
-                }
-                let dij_bin = scalar_to_bits(&dij, u);
-
-                // sample u-1 random public shares for wij and set the last to match sum
-                let mut wij_pub: Vec<Scalar> = Vec::with_capacity(u);
-                for _ in 0..(u - 1) {
-                    wij_pub.push(random_scalar(&mut rng_proof));
-                }
-                let first = lincomb_pow2(&wij_pub);
-                let denom = two_pow(u - 1); // 2^(u-1)
-                let last = (wij - first) * denom.invert(); // division with scalar
-                wij_pub.push(last);
-
-                let d_ij_vec: Vec<RistrettoPoint> = dij_bin.iter().zip(wij_pub.iter()).map(|(dij, wij)| dij * g + wij * h).collect();
-                let d_ij_bis_vec: Vec<RistrettoPoint> = d_ij_vec.iter().map(|d_ij| d_ij - g).collect();
-                
-                c_vec.push(d_ij_vec);
-                c_bis_vec.push(d_ij_bis_vec);
-                w.push(wij_pub); // push the wiju list
-            }
-        }
+        let t1 = Instant::now();
+        let (c_vec, c_bis_vec, w) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
         
         let c_vec_refs: Vec<&[RistrettoPoint]> = c_vec.iter().map(|inner| inner.as_slice()).collect();
         let c_bis_vec_refs: Vec<&[RistrettoPoint]> = c_bis_vec.iter().map(|inner| inner.as_slice()).collect();
@@ -1544,7 +1562,7 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
 )->ZKthresholdi{
     let offset = epsilon_bin[0];
     let l = y.len() - offset;
-    println!("l = {}", l);
+    // println!("l = {}", l);
     let y_view = &y[offset..];  
     let alpha_view = &alpha[offset..];
 
@@ -1561,10 +1579,10 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
     }
     let last = epsilon_bin.len()-1;
     let mut found = false;
-    for ind in (epsilon_bin[last]-offset+1..l){
-        println!("{}", ind);
+    for ind in epsilon_bin[last]-offset+1..l{
+        // println!("{}", ind);
         if y_view[ind] == alpha_view[ind] * h{
-            println!("enter in the first or");
+            // println!("enter in the first or");
             list_relation[ind] = true;
             found = true;
             for _j in 0..ind{
@@ -1587,9 +1605,8 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
         }
     }
 
-    println!("{:?}", list_relation);
     // deduce the first true relation from right
-    while(list_relation[first]==false){
+    while list_relation[first]==false{
         first+=1;
     }
     // generate vlidation list for epsilon_bin
@@ -1601,7 +1618,7 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
 
     // commitment phase
     for i in 0..l{
-        if (list_relation[i]){
+        if list_relation[i]{
             r[i] = random_scalar(rng);
             rr[i] = r[i] * h;
         }else{
@@ -1613,7 +1630,7 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
         println!("epsilon bit length < 2");
         let mut c_sum = Scalar::ZERO;
         for i in 0..l{
-            if (list_relation[i]==false){
+            if list_relation[i]==false{
                 c[i] = random_scalar(rng);
                 c_sum += c[i];
                 rr[i] = u[i] * h - c[i] * y_view[i];
@@ -1818,10 +1835,9 @@ pub fn verify_threshold_i(
 	return true
 }
 
-pub fn verify_threshold<T: CryptoRngCore>(
+pub fn verify_threshold(
     h: &RistrettoPoint,
     y_list: &[Vec<RistrettoPoint>],
-    proof_rng: &mut T,
     proof_list: &[ZKthresholdi],
     epsilon_bin: &[usize]
 )->bool{
@@ -1916,11 +1932,11 @@ pub fn measure_time_non_similarity(
                 epsilon_bin.push(bit);
             }
         }
-        println!("{:?}", epsilon_bin);
+        // println!("{:?}", epsilon_bin);
 
         time_commit += t1.elapsed();
 
-        println!("  commit:        {:?}", time_commit);
+        // println!("  commit:        {:?}", time_commit);
 
         // --- 6) PROOF time ----------------------------------------------
         let t_proof = Instant::now();
@@ -1933,20 +1949,19 @@ pub fn measure_time_non_similarity(
         );
         time_proof_threshold += t_proof.elapsed();
 
-        println!("  proof (MIN):   {:?}", time_proof_threshold);
+        // println!("  proof (MIN):   {:?}", time_proof_threshold);
 
         // --- 7) VERIFY time ---------------------------------------------
         let t_verify = Instant::now();
         let ok = verify_threshold(
             &h,
             &Y_list,
-            &mut rng_proof,
             &proof_list,
             &epsilon_bin
         );
 
         time_verify_threshold += t_verify.elapsed();
-        println!("  verify (THRESHOLD):  {:?}", time_verify_threshold);
+        // println!("  verify (THRESHOLD):  {:?}", time_verify_threshold);
 
         println!("{:?}",ok);
         debug_assert!(ok, "verify_threshold failed!");
