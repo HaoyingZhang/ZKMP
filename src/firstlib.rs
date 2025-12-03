@@ -244,12 +244,13 @@ pub fn calculate_dist_commit<T: CryptoRng + RngCore>(
     x_diff: &[Scalar],
     k_diff: &[Scalar],
     k_tilde: &[Scalar],
-)->(Vec<Vec<RistrettoPoint>>, Vec<Vec<RistrettoPoint>>, Vec<Vec<Scalar>>){
+)->(Vec<Vec<RistrettoPoint>>, Vec<Vec<RistrettoPoint>>, Vec<Vec<Scalar>>, Vec<Vec<Scalar>>){
     // number of subsequences
     let l = n - m + 1;
         
     let mut c_vec : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l*l);
     let mut c_bis_vec : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l*l);
+    let mut d_private_bin_vec: Vec<Vec<Scalar>> = Vec::with_capacity(l*l);
     let mut w : Vec<Vec<Scalar>> = Vec::with_capacity(l*l);
 
     for i in 0..l{
@@ -280,16 +281,17 @@ pub fn calculate_dist_commit<T: CryptoRng + RngCore>(
             let d_ij_vec: Vec<RistrettoPoint> = dij_bin.iter().zip(wij_pub.iter()).map(|(dij, wij)| dij * g + wij * h).collect();
             let d_ij_bis_vec: Vec<RistrettoPoint> = d_ij_vec.iter().map(|d_ij| d_ij - g).collect();
             
+            d_private_bin_vec.push(dij_bin);
             c_vec.push(d_ij_vec);
             c_bis_vec.push(d_ij_bis_vec);
             w.push(wij_pub); // push the wiju list
         }
     }
-    return (c_vec, c_bis_vec, w) // (D_iju), (D_iju/g), (w_iju)
+    return (c_vec, c_bis_vec, w, d_private_bin_vec) // (D_iju), (D_iju/g), (w_iju), (d_iju)
 }
 
 pub fn measure_time_proof_square(
-    ts: &Vec<Scalar>,
+    upper: usize,
     n: usize,
     m: usize, 
     iter: usize
@@ -310,10 +312,12 @@ pub fn measure_time_proof_square(
         let duration_setup = start_setup.elapsed();
         time_setup = time_setup + duration_setup;
 
+        let ts = random_ecg(&mut rng, n, upper);
+
         // Commit:
         let start_commit = Instant::now();
         // ----------- General commit -------------- //
-        let c: Commit = commit(&mut set, ts, &mut rng_k); // commit of device
+        let c: Commit = commit(&mut set, &ts, &mut rng_k); // commit of device
 
         let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng);
 
@@ -568,7 +572,7 @@ pub fn measure_time_proof_distance(
         let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng_proof);
         
         let t1 = Instant::now();
-        let (c_vec, c_bis_vec, w) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
+        let (c_vec, c_bis_vec, w, _) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
         
         let c_vec_refs: Vec<&[RistrettoPoint]> = c_vec.iter().map(|inner| inner.as_slice()).collect();
         let c_bis_vec_refs: Vec<&[RistrettoPoint]> = c_bis_vec.iter().map(|inner| inner.as_slice()).collect();
@@ -1041,7 +1045,7 @@ pub fn measure_time_exist_bin(
         // calculate commit
         let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&commitment, &set, &mut rng_proof);
         
-        let (d_vec, _, w) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
+        let (d_vec, _, w, _) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
 
         // MPD
         let mpd      = compute_mpd_with_window_scalar(&ts, m);
@@ -1054,7 +1058,9 @@ pub fn measure_time_exist_bin(
         let d_vec_refs: Vec<&[RistrettoPoint]> = d_vec.iter().map(|inner| inner.as_slice()).collect();
         let w_refs : Vec<&[Scalar]> = w.iter().map(|inner| inner.as_slice()).collect();
 
-        time_commit += t1.elapsed();
+        let tak = t1.elapsed();
+        time_commit += tak;
+        println!("Commit time {:?}", tak);
 
         // Proof
         let mut time_proof_iter  = Duration::ZERO;
@@ -1087,9 +1093,11 @@ pub fn measure_time_exist_bin(
         }
         println!("{:?}", res);
         debug_assert!(res, "verify_exist_bin failed ");
-        // accumulate over all iterations
+
         time_proof_mpd  += time_proof_iter;
+        println!("Proof time: {:?}", time_proof_iter);
         time_verify_mpd += time_verify_iter;
+        println!("Verify time: {:?}", time_verify_iter);
     }
 
     println!("Total over {} iterations:", iter);
@@ -1099,30 +1107,52 @@ pub fn measure_time_exist_bin(
     println!("  verify (MPD): {:?}", time_verify_mpd/(iter as u32));
 }
 
-// --------------------------
+// -------------- MPD min -------
+// pub fn list_relation(
+//     mut cmpt: usize,
+//     mpd_bin: Vec<Scalar>,
+//     d_ij: &[Scalar],
+//     mut found: bool,
+//     mut list: Vec<bool>
+// ) -> Vec<bool>{
+// 	while (found == false) && (cmpt > 0){
+// 		if d_ij[cmpt-1] - mpd_bin[cmpt-1] == Scalar::ONE {
+// 			list[2*cmpt-1] = true; // corresponds to y_{2l}
+// 			found = true;
+// 		}
+// 		else{
+// 			list[2*cmpt-2] = true; // corresponds to y_{2l-1}	
+// 			cmpt = cmpt - 1;
+// 			list_relation(cmpt,mpd_bin.clone(),d_ij.clone(),found,list.clone());
+// 		}
+// 	}
+//     // println!("cmpt = {}", cmpt);
+// 	return list;
+// }
 pub fn list_relation(
-    mut cmpt: usize,
     mpd_bin: Vec<Scalar>,
-    d_ij: Vec<Scalar>,
-    mut found: bool,
-    mut list: Vec<bool>
+    d_ij: &[Scalar],
+    ell: usize
 ) -> Vec<bool>{
-	while (found == false) && (cmpt > 0){
+    let mut cmpt = ell;
+    let mut list: Vec<bool> = vec![false; 2*ell];
+	while cmpt > 0{
 		if d_ij[cmpt-1] - mpd_bin[cmpt-1] == Scalar::ONE {
-			list[2*cmpt-1] = true; // corresponds to y_{2l}
-			found = true;
+			list[2*cmpt-1] = true; // corresponds to y_{2l-1}
+            break;
 		}
 		else{
-			list[2*cmpt-2] = true; // corresponds to y_{2l-1}	
+			list[2*cmpt-2] = true; // corresponds to y_{2l}	
 			cmpt = cmpt - 1;
-			list_relation(cmpt,mpd_bin.clone(),d_ij.clone(),found,list.clone());
 		}
 	}
     // println!("cmpt = {}", cmpt);
 	return list;
 }
 
-pub fn prove_min<T: CryptoRng + RngCore>(rng: &mut T, y: Vec<RistrettoPoint>,h: RistrettoPoint,mut alpha: Vec<Scalar>,mut list: Vec<bool>) -> ZKmin{
+
+// function for a given i
+pub fn prove_min<T: CryptoRng + RngCore>(rng: &mut T, y: &[RistrettoPoint],h: RistrettoPoint,mut alpha: &[Scalar],mut list: Vec<bool>) -> ZKmin{
 	let l = y.len() / 2;
 	let mut r: Vec<Scalar> = vec![Scalar::from(0u64);2*l]; // vector of random 
 	let mut rr: Vec<RistrettoPoint> = vec![RistrettoPoint::identity();2*l]; // vector of commitments
@@ -1133,6 +1163,7 @@ pub fn prove_min<T: CryptoRng + RngCore>(rng: &mut T, y: Vec<RistrettoPoint>,h: 
 	while list[first] == false{
 		first +=1;
 	}
+    // println!("{:?}", list);
 	
 	// Commitment Phase
 	for i in 0..2*l{
@@ -1216,9 +1247,9 @@ pub fn prove_min<T: CryptoRng + RngCore>(rng: &mut T, y: Vec<RistrettoPoint>,h: 
 	   	u[0] = r[0] + c[0] * alpha[0];
 	}
 	
-	alpha.zeroize();
-	r.zeroize();
-	list.zeroize();
+	// alpha.zeroize();
+	// r.zeroize();
+	// list.zeroize();
 	
 	return ZKmin{ commitments: rr, challenges: c, responses: u }
 }
@@ -1236,33 +1267,35 @@ pub fn verify_min(proof: &ZKmin, y: Vec<RistrettoPoint>,h: RistrettoPoint) -> bo
 	let chal_gen = chal_list(&rr.clone(),&y.clone(),&vec![h;y.len()]);
 	
 	if chal_gen != c[2*l-1] + c[2*l-2]{
+        println!("Challenge error");
 		return false
 	}
-	for i in 0..2*l-1{
-		if rr[i] != u[i] * h - c[i] * y[i]{
-			return false	
-		}
-	}
-	
-	for i in 2..l{
+    for i in 2..l{
 		if c[2*i-2] != c[2*i-3] + c[2*i-4]{
 			println!("{:?}, {}",c[2*i-2] == c[2*i-3] + c[2*i-4],i);
 			return false
 		}
 	}
+	for i in 0..2*l-1{
+		if rr[i] != u[i] * h - c[i] * y[i]{
+            println!("Error at indice {}", i);
+			return false	
+		}
+	}
+	
 	return true
 }
 
 
 pub fn proof_mpd_min<T: CryptoRngCore>(
     mpd_bin: Vec<Vec<Scalar>>, // [MPD_i_binary]
-    d_ij: Vec<Vec<Scalar>>, // [d_i_j_binary]
+    d_ij: &[&[Scalar]], // [d_i_j_binary]
     h: &RistrettoPoint,
     l: usize, // l = n-m+1, length of MPD
     _k: usize,
     m: usize,
-    alpha_list: &[Vec<Scalar>], // list of secrets
-    y_list: &[Vec<RistrettoPoint>], // list of commitments
+    alpha_list: &[&[Scalar]], // list of secrets
+    y_list: &[&[RistrettoPoint]], // list of commitments
     proof_rng: &mut T,
     is_real_relation: &[bool]
 )->Vec<Option<ZKmin>>{
@@ -1288,7 +1321,8 @@ pub fn proof_mpd_min<T: CryptoRngCore>(
                 let found = false;
 
                 // let t_list = Instant::now();
-    	        let list = list_relation(cmpt, mpd_bin[i].clone(), d_ij[i*l+j].clone(), found, list);
+    	        // let list = list_relation(cmpt, mpd_bin[i].clone(), d_ij[i*l+j].clone(), found, list);
+                let list = list_relation(mpd_bin[i].clone(), d_ij[i*l+j].clone(), k_local);
                 // println!("Time list relation: {:?}",t_list.elapsed());
                 // println!("{:?}", list);
                 // let t_prove = Instant::now();
@@ -1331,7 +1365,7 @@ pub fn verify_mpd_min<T: CryptoRngCore>(
 }
 
 pub fn measure_time_mpd_min(
-    x: &[Scalar],
+    upper: usize,
     n: usize,   // length of time series
     m: usize,   // window size
     ell: usize, // number of bits (ℓ)
@@ -1350,153 +1384,71 @@ pub fn measure_time_mpd_min(
         let mut rng_proof = OsRng;
         let mut rng_dist  = OsRng;
 
-        // --- 1) Compute MPD(i) for each i -------------------------------
-        let ts = x; // alias
-        let mpd = compute_mpd_with_window_scalar(ts, m); // length a
-
-        // Binary decomposition MPD_i -> {MPD_{i,u}}_{u=0..ell-1}
-        let mpd_bits: Vec<Vec<Scalar>> = mpd
-            .iter()
-            .map(|val| scalar_to_bits(val, ell)) // each is length ell, bits 0/1 as Scalar
-            .collect();
-
-        // --- 2) Setup ----------------------------------------------------
         let t0 = Instant::now();
         let mut set = setup(n, &mut rng);
         time_setup += t0.elapsed();
 
-        let g = set.gen;
-        let h = set.h_;
-        let n_set = set.n_;
+        // --- 1) Compute MPD(i) for each i -------------------------------
+        let ts = random_ecg(&mut rng, n, upper);
+        // println!("{:?}", ts);
 
-        // --- 3) Commit original time series (for distances etc.) --------
         let t1 = Instant::now();
         let commitment = commit(&mut set, &ts.to_vec(), &mut rng_k);
 
-        let x_enc = &commitment.x_;
-        let k_enc = &commitment.k_;
+        let x = &commitment.x_;
+        let k = &commitment.k_;
+        let n = set.n_;
+        let g = set.gen;
+        let h = set.h_;
 
-        // --- 4) Build MPD bit commitments M_{i,u} and store z_{i,u} -----
-        //
-        // M_{i,u} = g^{MPD_{i,u}} h^{z_{i,u}}
-        // z_{i,u} random scalar
-        //
-        let mut M_list: Vec<Vec<RistrettoPoint>> = Vec::with_capacity(a);
-        let mut z_list: Vec<Vec<Scalar>>         = Vec::with_capacity(a); // z_{i,u}
-        let mut d_bits: Vec<Vec<Scalar>>         = Vec::with_capacity(a);
+        // calculate commit
+        let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&commitment, &set, &mut rng_proof);
+        
+        let (d_vec, _, w, d_private_vec) = calculate_dist_commit(&mut rng_proof, n, m, ell, g, h, &x_diff, &k_diff, &k_tilde);
+        
+        // MPD
+        let mpd      = compute_mpd_with_window_scalar(&ts, m);
+        let mpd_bin: Vec<Vec<Scalar>> = mpd.iter().map(|x| scalar_to_bits(x, ell)).collect();
 
-        for i in 0..a {
-            let mut M_i: Vec<RistrettoPoint> = Vec::with_capacity(ell);
-            let mut zi: Vec<Scalar>         = Vec::with_capacity(ell);
+        let (m_vec, _, z_vec) = calculate_mpd_commit(&g, &h, mpd_bin.clone(), ell, &mut rng_proof);
 
-            for u_idx in 0..ell {
-                let bit = mpd_bits[i][u_idx];         // MPD_{i,u} ∈ {0,1}
-                let z_iu = random_scalar(&mut rng_proof); // z_{i,u} ∈ Z_p
-                let M_iu = g * bit + h * z_iu;        // Pedersen-like commitment
+        let m_vec_refs: Vec<&[RistrettoPoint]> = m_vec.iter().map(|inner| inner.as_slice()).collect();
+        let z_vec_refs: Vec<&[Scalar]> = z_vec.iter().map(|inner| inner.as_slice()).collect();
+        let d_vec_refs: Vec<&[RistrettoPoint]> = d_vec.iter().map(|inner| inner.as_slice()).collect();
+        let w_refs : Vec<&[Scalar]> = w.iter().map(|inner| inner.as_slice()).collect();
+        let d_private_refs : Vec<&[Scalar]> = d_private_vec.iter().map(|inner| inner.as_slice()).collect();
 
-                M_i.push(M_iu);
-                zi.push(z_iu);
-            }
+        // println!("MPD: {:?}", mpd);
+        let a = mpd.len();
+        
+        let mut alpha_list : Vec<Vec<Scalar>> = Vec::with_capacity(a*a);
+        let mut y_list : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(a*a);
 
-            M_list.push(M_i);
-            z_list.push(zi);
-        }
-
-        // --- 5) Build y_list and alpha_list for the MIN proof -----------
-        //
-        // For each pair (i,j) and each bit u:
-        //  - compute distance d_{i,j},
-        //  - derive some commitment using randomness w_{i,j,u},
-        //  - define α_{i,j,u} = z_{i,u} - w_{i,j,u}.
-        //
-        // Here we’ll use:
-        //   D_{i,j,u} = g^{d_{i,j,u}} h^{w_{i,j,u}}
-        // then Y_{i,j,u} is something like:
-        //   Y_{i,j,u} = M_{i,u} / D_{i,j,u} for impair terms and Y_{i,j,u} = g * M_{i,u} / D_{i,j,u} for pair terms
-        //
-        //
-        let mut y_list: Vec<Vec<RistrettoPoint>>  = Vec::with_capacity(a * a);
-        let mut alpha_list: Vec<Vec<Scalar>>      = Vec::with_capacity(a * a);
-        let k_tilde = random_vec_scalar(&mut rng, n * n);
-
-        for i in 0..a {
-            let zi = &z_list[i];    // length ell
-            let Mi = &M_list[i];    // length ell
-
-            for j in 0..a {
-                // --- distance d_{i,j} in scalar form -------------------
-                let mut d_ij = Scalar::ZERO;
-                let mut wij_private = Scalar::ZERO;
-
-                for r in 0..m {
-                    let xij = x[i + r] - x[j + r];
-                    let kij = k_enc[i + r] - k_enc[j + r];
-                    let k_tilde_ij = k_tilde[(i + r) * n + (j + r)];
-            
-                    wij_private += xij * kij + k_tilde_ij;
-                    d_ij += xij * xij;
+        for i in 0..a{
+            for j in 0..a{
+                let mut alpha_buffer : Vec<Scalar> = Vec::with_capacity(2*ell);
+                let mut y_buffer : Vec<RistrettoPoint> = Vec::with_capacity(2*ell);
+                for bit in 0..ell{
+                    let alpha_i_ell_ = z_vec_refs[i][bit] - w_refs[i*a+j][bit];
+                    alpha_buffer.push(alpha_i_ell_);
+                    alpha_buffer.push(alpha_i_ell_);
+                    let y_buffer_pair_ = m_vec_refs[i][bit] - d_vec_refs[i*a+j][bit];
+                    let y_buffer_impair_ = m_vec_refs[i][bit] - d_vec_refs[i*a+j][bit] + g;
+                    y_buffer.push(y_buffer_pair_);
+                    y_buffer.push(y_buffer_impair_);
                 }
-
-                // binary bits of d_{i,j}
-                let d_ij_bits = scalar_to_bits(&d_ij, ell); // length ell
-                d_bits.push(d_ij_bits.clone());
-
-                // randomness w_{i,j,u} for each bit (public shares)
-                let mut w_ij_vec: Vec<Scalar> = Vec::with_capacity(ell);
-                for _ in 0..ell-1 {
-                    w_ij_vec.push(random_scalar(&mut rng_dist));
-                }
-            
-                let first = lincomb_pow2(&w_ij_vec);   // sum_{b=0..u-2} wij_pub[b] * 2^b
-                let denom = two_pow(ell - 1);          // 2^(u-1)
-                let last  = (wij_private - first) * denom.invert();
-                w_ij_vec.push(last); 
-
-                // commitments D_{i,j,u} = g^{d_{i,j,u}} h^{w_{i,j,u}}
-                let mut D_ij: Vec<RistrettoPoint> = Vec::with_capacity(ell);
-                for u_idx in 0..ell {
-                    let bit_d = d_ij_bits[u_idx];
-                    let w_ij = w_ij_vec[u_idx];
-
-                    let D_ij_u = g * bit_d + h * w_ij;
-                    D_ij.push(D_ij_u);
-                }
-
-                // define Y_{i,j,u} = M_{i,u} - D_{i,j,u}  (i.e., group division)
-                // so that:
-                //   Y_{i,j,u} = g^{MPD_{i,u} - d_{i,j,u}} h^{z_{i,u} - w_{i,j,u}}
-                // and the witness α_{i,j,u} for the h-part is:
-                //   α_{i,j,u} = z_{i,u} - w_{i,j,u}
-                //
-                // This matches what your `prove_min` expects: y = h^{α} (up to
-                // how you encode the g-part / bit tests in your AND/OR tree).
-                //
-                let mut Y_ij: Vec<RistrettoPoint> = Vec::with_capacity(ell);
-                let mut alpha_ij: Vec<Scalar>     = Vec::with_capacity(ell);
-
-                for u_idx in 0..ell {
-                    let z_iu  = zi[u_idx];
-                    let w_iju = w_ij_vec[u_idx];
-
-                    let alpha_iju = z_iu - w_iju;     // *** here: α = z - w ***
-                    alpha_ij.push(alpha_iju);
-                    alpha_ij.push(alpha_iju);
-
-                    let M_iu = Mi[u_idx];
-                    let D_ij_u = D_ij[u_idx];
-
-                    let Y_ij_u = M_iu - D_ij_u;
-                    Y_ij.push(Y_ij_u); // y_pair
-                    Y_ij.push(Y_ij_u + g); //y_impair
-                }
-
-                y_list.push(Y_ij);
-                alpha_list.push(alpha_ij);
+                alpha_list.push(alpha_buffer.clone());
+                y_list.push(y_buffer.clone());
             }
         }
-        time_commit += t1.elapsed();
 
-        println!("  commit:        {:?}", time_commit);
+        let y_list_refs: Vec<&[RistrettoPoint]> = y_list.iter().map(|inner| inner.as_slice()).collect();
+        let alpha_list_refs : Vec<&[Scalar]> = alpha_list.iter().map(|inner| inner.as_slice()).collect();
+
+
+        let tak = t1.elapsed();
+        time_commit += tak;
+        println!("Commit time {:?}", tak);
 
         // initiate is_real_relation list
         let is_real_relation = vec![false; 2 * ell];
@@ -1504,14 +1456,14 @@ pub fn measure_time_mpd_min(
         // --- 6) PROOF time ----------------------------------------------
         let t_proof = Instant::now();
         let proof_list = proof_mpd_min(
-            mpd_bits,
-            d_bits,
+            mpd_bin.clone(),
+            &d_private_refs,
             &h,
             a,              // l = number of indices
             ell,            // k = number of bits per index (or your tree depth parameter)
             m,            
-            &alpha_list,
-            &y_list,
+            &alpha_list_refs,
+            &y_list_refs,
             &mut rng_proof,
             &is_real_relation,
         );
@@ -1844,7 +1796,7 @@ pub fn verify_threshold(
 }
 
 pub fn measure_time_non_similarity(
-    x: &[Scalar],
+    upper: usize,
     n: usize,   // length of time series
     m: usize,   // window size
     ell: usize, // number of bits (ℓ)
@@ -1865,8 +1817,8 @@ pub fn measure_time_non_similarity(
         let mut rng_dist  = OsRng;
 
         // --- 1) Compute MPD(i) for each i -------------------------------
-        let ts = x; // alias
-        let mpd = compute_mpd_with_window_scalar(ts, m); // length a
+        let ts = random_ecg(&mut rng, n, upper);
+        let mpd = compute_mpd_with_window_scalar(&ts, m); // length a
         // println!("{:?}", mpd);
         // Binary decomposition MPD_i -> {MPD_{i,u}}_{u=0..ell-1}
         let mpd_bits: Vec<Vec<Scalar>> = mpd
@@ -1961,6 +1913,7 @@ pub fn measure_time_non_similarity(
     println!("==== THRESHOLD timing over {} iterations ====", iter);
     println!("  setup:         {:?}", time_setup/(iter as u32));
     println!("  commit:        {:?}", time_commit/(iter as u32));
-    println!("  proof (MIN):   {:?}", time_proof_threshold/(iter as u32));
-    println!("  verify (MIN):  {:?}", time_verify_threshold/(iter as u32));
+    println!("  proof (Threshold):   {:?}", time_proof_threshold/(iter as u32));
+    println!("  verify (Threshold):  {:?}", time_verify_threshold/(iter as u32));
 }
+
