@@ -1,1 +1,0 @@
-(Vec<Option<usefulstructs::ProofSquareij>>, Vec<Option<RistrettoPoint>>)
