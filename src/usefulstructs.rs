@@ -1,7 +1,3 @@
-use rand::{ Rng, thread_rng };
-use rand::prelude::SliceRandom;
-use rand_core::{ CryptoRng, RngCore, OsRng, CryptoRngCore };   
-use std::time::{ Instant, Duration }; 
 use curve25519_dalek::{ scalar::Scalar, RistrettoPoint};
 
 
@@ -81,6 +77,7 @@ pub struct ZKmin{
     pub responses: Vec<Scalar>,
 }
 
+#[derive(Clone)]
 pub struct ZKthresholdi{
     pub commitments: Vec<RistrettoPoint>,
     pub challenges: Vec<Scalar>,

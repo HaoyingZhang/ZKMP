@@ -1,6 +1,6 @@
-pub mod firstlib;
+pub mod schemas;
 
-pub use crate::firstlib::*;
+pub use crate::schemas::*;
 
 pub mod usefulfuncs;
 

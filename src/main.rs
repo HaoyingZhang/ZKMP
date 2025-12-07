@@ -3,7 +3,13 @@
 use rand_core::OsRng;
 use curve25519_dalek::{ scalar::Scalar};
 
-use zkmp::firstlib::*;        // everything public in firstlib
+use zkmp::square::*;        
+use zkmp::distance::*;  
+use zkmp::mpd_bin::*;  
+use zkmp::mpd_exist::*;
+use zkmp::mpd_min::*;
+use zkmp::no_sim::*;
+use zkmp::no_ano::*;
 use zkmp::usefulfuncs::*;     // functions like random_scalar, etc.
 use zkmp::usefulstructs::*;   // your types
 
@@ -27,7 +33,7 @@ fn main() {
     let iter: usize = 5;
     let threshold = 10;
     
-    measure_time_proof_square(upper,n, m, iter);
+    // measure_time_proof_square(upper,n, m, iter);
 
     // measure_time_proof_distance(upper,n,m,u,iter);
 
@@ -38,5 +44,7 @@ fn main() {
     // measure_time_mpd_min(upper, n, m, u, iter);
 
     // measure_time_non_similarity(upper, n, m, u, iter, threshold);
+
+    measure_time_non_anomaly(upper, n, m, u, iter, threshold);
     
 }

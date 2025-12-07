@@ -1,9 +1,6 @@
-use rand::{ Rng, thread_rng };
-use rand_core::{ CryptoRng, RngCore, OsRng, CryptoRngCore };   
-use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity, constants::RISTRETTO_BASEPOINT_POINT, constants::RISTRETTO_BASEPOINT_TABLE };
-use zeroize::Zeroize; 
-use curve25519_dalek::ristretto::CompressedRistretto;
-use crate::usefulstructs::*;
+use rand::{ Rng };
+use rand_core::{ CryptoRng, RngCore, CryptoRngCore };   
+use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, constants::RISTRETTO_BASEPOINT_TABLE };
 use digest::Digest;
 use sha2::Sha512;
 
