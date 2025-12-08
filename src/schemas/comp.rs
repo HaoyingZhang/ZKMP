@@ -39,7 +39,7 @@ pub fn relation_check(
             // println!("bit: {}", bit);
             if rel_list[bit]{
                 res = true;
-                return true;
+                break;
             }
         }
         if res==false{
@@ -47,7 +47,8 @@ pub fn relation_check(
                 break;
             }
             if rel_list[begin-1]==false{
-                return false
+                res = false;
+                break;
             }
 
         }
@@ -197,11 +198,12 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
             );
             buffer_sum += buffer;
         }
+        // println!("calculated sum challenge for index: {}", u_alpha_view[1]);
         c_j_star[u_alpha_view[1]] = buffer_sum;
         rr_j_star[u_alpha_view[1]] = u_j_star[u_alpha_view[1]] * h  - c_j_star[u_alpha_view[1]] * d_ij_star_view[u_alpha_view[1]];
 
         let mut end = 2;
-        while u_alpha_view[end]<=nearest_alpha_index_right{
+        while end < u_alpha_view.len() && u_alpha_view[end]<=nearest_alpha_index_right {
             buffer_sum = Scalar::ZERO;
             for i in u_alpha_view[end-1]+1..u_alpha_view[end]{
                 let alea_c = simulate_c_and_rr(
@@ -214,13 +216,14 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
                     rng_proof);
                 buffer_sum += alea_c;
             }
-            
+            // println!("calculated sum challenge for index: {}", u_alpha_view[end]);
             c_j_star[u_alpha_view[end]] = buffer_sum + c_j_star[u_alpha_view[end-1]];
             rr_j_star[u_alpha_view[end]] = u_j_star[u_alpha_view[end]] * h - c_j_star[u_alpha_view[end]] * d_ij_star_view[u_alpha_view[end]];
             end += 1;
         }
         // calculate the random for indices from index_right to index_left
         for i in nearest_alpha_index_right+1..nearest_alpha_index_left{
+            // println!("Entrer ici: nearest_alpha_index_right = {}, left = {}", nearest_alpha_index_right, nearest_alpha_index_left);
             if rel_list_j_star[i] == false{
                 let _ = simulate_c_and_rr(
                     i,
@@ -243,6 +246,16 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
                     h,
                     rng_proof);
             }
+        }
+        if nearest_alpha_index_left == l && rel_list_j_star[nearest_alpha_index_left-1]==false{
+            let _ = simulate_c_and_rr(
+                    nearest_alpha_index_left,
+                    &mut c_j_star, 
+                    &mut rr_j_star, 
+                    &d_ij_star_view, 
+                    &u_j_star, 
+                    h,
+                    rng_proof);
         }
     }
 
@@ -281,7 +294,7 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
 
     // calculate c and u for the term true for j_star
     if first_true_from_right > u_alpha_view[last]{
-        println!("Entered in this block!"); // jamais ici
+        // println!("Entered in this block!"); 
         let mut buffer = Scalar::ZERO;
         for i in u_alpha_view[last]..l{
             if i != first_true_from_right{
@@ -290,6 +303,7 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
         }
         c_j_star[first_true_from_right] = chal_j_star - buffer;
         u_j_star[first_true_from_right] = r_j_star[first_true_from_right] + c_j_star[first_true_from_right] * w_ij_star_view[first_true_from_right];
+        
     }
     else{
         // println!("Relation at index 0: {:?}", rel_list_j_star[0]);
@@ -426,7 +440,7 @@ pub fn verify_non_anomaly_j(
 
     let offset = epsilon_bin[0];
 
-    let alpha = epsilon_bin[epsilon_bin.len()-1]-offset;
+    // let alpha = epsilon_bin[epsilon_bin.len()-1]-offset;
 	
 	let l = y.len()-offset;
 	
@@ -505,12 +519,12 @@ pub fn verify_non_anomaly_i(
 
     let chal = chal_list(&rr_aggregated.clone(), &y_aggregated.clone(), &vec![h; a*l]);
 
-    res &= chal == chal_aggregated;
+    res &= (chal == chal_aggregated);
 
     res
 }
 
-pub fn measure_time_non_anomaly(
+pub fn measure_time_comp(
     upper: usize,
     n: usize,
     m: usize,
@@ -543,11 +557,9 @@ pub fn measure_time_non_anomaly(
         let g = set.gen;
         let h = set.h_;
 
-        let t1 = Instant::now();
-
         let (_, _, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng_proof);
         
-        let t1 = Instant::now();
+        let _t1 = Instant::now();
         let (d_vec, _, w_vec, _) = calculate_dist_commit(&mut rng_proof, n, m, ell, g, h, &x_diff, &k_diff, &k_tilde);
 
         // calculate u_alpha list
@@ -559,7 +571,7 @@ pub fn measure_time_non_anomaly(
             }
         }
 
-        time_commit += t1.elapsed();
+        time_commit += _t1.elapsed();
 
         let a = n - m + 1;
         let mut verify_non_anomaly : bool = true;

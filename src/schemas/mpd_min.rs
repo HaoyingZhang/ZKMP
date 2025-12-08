@@ -1,7 +1,7 @@
 use rand::rngs::OsRng;
 use rand_core::{ CryptoRng, RngCore, CryptoRngCore };   
 use std::time::{ Instant, Duration }; 
-use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
+use curve25519_dalek::{ scalar::Scalar, ristretto::RistrettoPoint, traits::Identity};
 use zeroize::Zeroize;
 use crate::usefulstructs::*;
 use crate::usefulfuncs::{random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
@@ -115,7 +115,7 @@ pub fn prove_min<T: CryptoRng + RngCore>(rng: &mut T, y: &[RistrettoPoint],h: Ri
 	}
 	
 	// Challenge Phase
-	let chal_gen = chal_list(&rr.clone(),&y.clone(),&vec![h;2*l]);
+	let chal_gen = chal_list(&rr.clone(),&y,&vec![h;2*l]);
 	
 	// Challenges + responses for the verified relations
 	if list[2*l-2] == true{ // list = 0...010
@@ -223,11 +223,11 @@ pub fn proof_mpd_min<T: CryptoRngCore>(
 
                 // let t_list = Instant::now();
     	        // let list = list_relation(cmpt, mpd_bin[i].clone(), d_ij[i*l+j].clone(), found, list);
-                let list = list_relation(mpd_bin[i].clone(), d_ij[i*l+j].clone(), k_local);
+                let list = list_relation(mpd_bin[i].clone(), d_ij[i*l+j], k_local);
                 // println!("Time list relation: {:?}",t_list.elapsed());
                 // println!("{:?}", list);
                 // let t_prove = Instant::now();
-                let proof = prove_min(proof_rng, y.clone(), h.clone(), alpha.clone().clone(), list.clone());
+                let proof = prove_min(proof_rng, y, h.clone(), alpha.clone(), list.clone());
                 // println!("Time prove min: {:?}",t_prove.elapsed());
                 proof_list.push(Some(proof));
             }

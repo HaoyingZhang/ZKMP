@@ -71,6 +71,7 @@ pub struct ProofMPDMinAND {
     pub z1: Scalar,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ZKmin{
     pub commitments: Vec<RistrettoPoint>,
     pub challenges: Vec<Scalar>,

@@ -8,10 +8,10 @@ use zkmp::distance::*;
 use zkmp::mpd_bin::*;  
 use zkmp::mpd_exist::*;
 use zkmp::mpd_min::*;
-use zkmp::no_sim::*;
-use zkmp::no_ano::*;
-use zkmp::usefulfuncs::*;     // functions like random_scalar, etc.
-use zkmp::usefulstructs::*;   // your types
+use zkmp::comp::*;
+use zkmp::threshold::*;
+use zkmp::scenarios::*;
+
 
 fn main() {
     println!("Execution in progress...");
@@ -22,16 +22,15 @@ fn main() {
     let n: usize = 100;
     let upper: usize = 45;
     let u: usize = 15; // u=13, u=15 and u=20
-    // let ts_scalar = random_ecg(&mut rng, n, upper);
-    // let mut set: Set = setup(n, &mut rng);
-    // let c: Commit = commit(&mut set, &ts_scalar, &mut rng_k); // commit of device
-    // let x: &Vec<Scalar> = open(&c);
-    // println!("{:?}", x);
-
     let m: usize = 10;
     let l = n.checked_sub(m).and_then(|x| x.checked_add(1)).expect("n must be >= m - 1");
-    let iter: usize = 5;
-    let threshold = 10;
+    let iter: usize = 1;
+    let threshold_anoaly = 10000;
+    let threshold_similarity = 10;
+
+    measure_time_non_similarity(upper, n, m, u, iter, threshold_similarity);
+
+    measure_time_non_anomaly(upper, n, m, u, iter, threshold_anomaly);
     
     // measure_time_proof_square(upper,n, m, iter);
 
@@ -43,8 +42,8 @@ fn main() {
 
     // measure_time_mpd_min(upper, n, m, u, iter);
 
-    // measure_time_non_similarity(upper, n, m, u, iter, threshold);
+    // measure_time_threshold(upper, n, m, u, iter, threshold);
 
-    measure_time_non_anomaly(upper, n, m, u, iter, threshold);
+    // measure_time_comp(upper, n, m, u, iter, threshold);
     
 }

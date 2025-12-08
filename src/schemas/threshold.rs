@@ -94,7 +94,7 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
                 rr[i] = u[i] * h - c[i] * y_view[i];
             }
         }
-        let chal_gen = chal_list(&rr.clone(),&y_view.clone(),&vec![h;l]);
+        let chal_gen = chal_list(&rr.clone(),&y_view,&vec![h;l]);
         c[first] = chal_gen - c_sum;
         u[first] = r[first] + c[first] * alpha_view[first];
 
@@ -153,7 +153,7 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
 
 
     // challenge + response phase
-    let chal_gen = chal_list(&rr.clone(),&y_view.clone(),&vec![h;l]);
+    let chal_gen = chal_list(&rr.clone(),&y_view,&vec![h;l]);
 
     // left tail
     let alpha_bit = epsilon_bin[epsilon_bin.len()-1]-offset;
@@ -184,11 +184,10 @@ pub fn prove_threshold_i<T: CryptoRng + RngCore>(
 
     // right tail
     let mut alpha_1_bit = epsilon_bin[epsilon_bin.len()-2]-offset;
-    let mut cursor = alpha_bit;
     for i in first+1..alpha_1_bit{
         if list_relation[i] && list_epsilon_bool[i] && i>1{
             let mut c_sum = Scalar::ZERO;
-            for j in i+1..cursor+1{
+            for j in i+1..alpha_bit+1{
                 c_sum += c[j];
             }
             c[i] = c_sum;
@@ -257,7 +256,7 @@ pub fn verify_threshold_i(
 	
 	// Recomputes the general challenge
     let y_view = &y[offset..];  
-	let chal_gen = chal_list(&rr.clone(),&y_view.clone(),&vec![h;l]);
+	let chal_gen = chal_list(&rr.clone(),&y_view,&vec![h;l]);
 	
     let mut buffer = Scalar::ZERO;
     
@@ -304,13 +303,13 @@ pub fn verify_threshold(
     for i in 0..l{
         let y = &y_list[i];
         let proof_ref = &proof_list[i];
-        res &= verify_threshold_i(proof_ref, y.clone(), h.clone(), epsilon_bin.clone());
+        res &= verify_threshold_i(proof_ref, y.clone(), h.clone(), epsilon_bin);
         
     }
     res
 }
 
-pub fn measure_time_non_similarity(
+pub fn measure_time_threshold(
     upper: usize,
     n: usize,   // length of time series
     m: usize,   // window size
@@ -343,7 +342,7 @@ pub fn measure_time_non_similarity(
 
         // --- 2) Setup ----------------------------------------------------
         let t0 = Instant::now();
-        let mut set = setup(n, &mut rng);
+        let set = setup(n, &mut rng);
         time_setup += t0.elapsed();
 
         let g = set.gen;
@@ -352,10 +351,6 @@ pub fn measure_time_non_similarity(
 
         // --- 3) Commit original time series (for distances etc.) --------
         let t1 = Instant::now();
-        let commitment = commit(&mut set, &ts.to_vec(), &mut rng_k);
-
-        // let x_enc = &commitment.x_;
-        // let k_enc = &commitment.k_;
 
         // --- 4) Build MPD bit commitments M_{i,u} and store z_{i,u} -----
         //
