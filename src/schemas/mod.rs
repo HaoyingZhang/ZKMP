@@ -6,4 +6,5 @@ pub mod mpd_exist;
 pub mod mpd_min;
 pub mod threshold;
 pub mod comp;
+pub mod comp_bis;
 pub mod scenarios;

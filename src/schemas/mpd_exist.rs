@@ -198,7 +198,7 @@ pub fn measure_time_exist_bin(
         // calculate commit
         let (_, _, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&commitment, &set, &mut rng_proof);
         
-        let (d_vec, _, w, _) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
+        let (d_vec, _, w, _, _) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
 
         // MPD
         let mpd      = compute_mpd_with_window_scalar(&ts, m);

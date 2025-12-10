@@ -305,7 +305,7 @@ pub fn measure_time_mpd_min(
         // calculate commit
         let (_, _, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&commitment, &set, &mut rng_proof);
         
-        let (d_vec, _, w, d_private_vec) = calculate_dist_commit(&mut rng_proof, n, m, ell, g, h, &x_diff, &k_diff, &k_tilde);
+        let (d_vec, _, w, d_private_vec, _) = calculate_dist_commit(&mut rng_proof, n, m, ell, g, h, &x_diff, &k_diff, &k_tilde);
         
         // MPD
         let mpd      = compute_mpd_with_window_scalar(&ts, m);

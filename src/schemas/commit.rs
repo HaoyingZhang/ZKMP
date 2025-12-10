@@ -95,7 +95,7 @@ pub fn calculate_dist_commit<T: CryptoRng + RngCore>(
     x_diff: &[Scalar],
     k_diff: &[Scalar],
     k_tilde: &[Scalar],
-)->(Vec<Vec<RistrettoPoint>>, Vec<Vec<RistrettoPoint>>, Vec<Vec<Scalar>>, Vec<Vec<Scalar>>){
+)->(Vec<Vec<RistrettoPoint>>, Vec<Vec<RistrettoPoint>>, Vec<Vec<Scalar>>, Vec<Vec<Scalar>>, Vec<Scalar>){
     // number of subsequences
     let l = n - m + 1;
         
@@ -103,6 +103,7 @@ pub fn calculate_dist_commit<T: CryptoRng + RngCore>(
     let mut c_bis_vec : Vec<Vec<RistrettoPoint>> = Vec::with_capacity(l*l);
     let mut d_private_bin_vec: Vec<Vec<Scalar>> = Vec::with_capacity(l*l);
     let mut w : Vec<Vec<Scalar>> = Vec::with_capacity(l*l);
+    let mut d_private_vec: Vec<Scalar> = Vec::with_capacity(l*l);
 
     for i in 0..l{
         for j in 0..l{
@@ -133,12 +134,13 @@ pub fn calculate_dist_commit<T: CryptoRng + RngCore>(
             let d_ij_bis_vec: Vec<RistrettoPoint> = d_ij_vec.iter().map(|d_ij| d_ij - g).collect();
             
             d_private_bin_vec.push(dij_bin);
+            d_private_vec.push(dij);
             c_vec.push(d_ij_vec);
             c_bis_vec.push(d_ij_bis_vec);
             w.push(wij_pub); // push the wiju list
         }
     }
-    return (c_vec, c_bis_vec, w, d_private_bin_vec) // (D_iju), (D_iju/g), (w_iju), (d_iju)
+    return (c_vec, c_bis_vec, w, d_private_bin_vec, d_private_vec) // (D_iju), (D_iju/g), (w_iju), (d_iju), (d_ij)
 }
 
 //  M_iu = g ^ MPD_iu * h ^ z_iu

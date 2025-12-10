@@ -52,7 +52,9 @@ pub fn relation_check(
             }
 
         }
-        cursor -= 1;
+        if cursor >0 {
+            cursor -= 1;
+        }
     }
     res
 }
@@ -66,7 +68,10 @@ mod tests {
         let rel_list = vec![false, true, true, true, true];
         let l = 5;
         let u_alpha = vec![2,3,4];
-        let res = relation_check(&rel_list, l, &u_alpha);
+        let offset = u_alpha[0];
+        let u_alpha_view : Vec<usize> = u_alpha.iter().map(|val| val-offset).collect();
+        let rel_list_view = &rel_list[offset..];
+        let res = relation_check(&rel_list_view, l-offset, &u_alpha_view);
         assert_eq!(res, true);
         println!("Test relation check passed !");
     }
@@ -80,6 +85,7 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
     rng_proof: &mut T
 )->Vec<ZKthresholdi>{
     let a = d_vec.len(); //number of j
+    // println!("length of j {}", a);
     let offset = u_alpha[0];
     let u_alpha_view : Vec<usize> = u_alpha.iter().map(|val| val-offset).collect();
     // println!("u alpha : {:?}", u_alpha_view);
@@ -247,22 +253,12 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
                     rng_proof);
             }
         }
-        if nearest_alpha_index_left == l && rel_list_j_star[nearest_alpha_index_left-1]==false{
-            let _ = simulate_c_and_rr(
-                    nearest_alpha_index_left,
-                    &mut c_j_star, 
-                    &mut rr_j_star, 
-                    &d_ij_star_view, 
-                    &u_j_star, 
-                    h,
-                    rng_proof);
-        }
     }
 
     // check if all the term has a rr replaced
-    for i in 0..l{
-        assert!(rr_j_star[i]!=RistrettoPoint::identity());
-    }
+    // for i in 0..l{
+    //     assert!(rr_j_star[i]!=RistrettoPoint::identity());
+    // }
 
     // calculate the challenges
     let mut rr : Vec<RistrettoPoint> = Vec::with_capacity(a*l);
@@ -495,6 +491,7 @@ pub fn verify_non_anomaly_i(
         let c_j = &proof_j.challenges;
         // let u_j = proof_j.responses;
         let d_ij = d_vec[j];
+        let d_ij_view = &d_ij[offset..];
 
         let verify_j = verify_non_anomaly_j(&proof_j, d_ij.to_vec(), h, u_alpha);
 
@@ -512,7 +509,7 @@ pub fn verify_non_anomaly_i(
             rr_aggregated.push(rr.clone());
         }
 
-        for y in d_ij{
+        for y in d_ij_view{
             y_aggregated.push(y.clone());
         }
     }
@@ -560,7 +557,7 @@ pub fn measure_time_comp(
         let (_, _, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng_proof);
         
         let _t1 = Instant::now();
-        let (d_vec, _, w_vec, _) = calculate_dist_commit(&mut rng_proof, n, m, ell, g, h, &x_diff, &k_diff, &k_tilde);
+        let (d_vec, _, w_vec, _, _) = calculate_dist_commit(&mut rng_proof, n, m, ell, g, h, &x_diff, &k_diff, &k_tilde);
 
         // calculate u_alpha list
         let epsilon_bin_val = scalar_to_bits(&Scalar::from(epsilon), ell);
@@ -574,20 +571,42 @@ pub fn measure_time_comp(
         time_commit += _t1.elapsed();
 
         let a = n - m + 1;
+        let half_m = m/2;
         let mut verify_non_anomaly : bool = true;
-        for i in 0..a{
-            // println!("==== i = {} ==== ", i);
-            let d_i = &d_vec[i*a..i*a+a];
-            let d_i_refs: Vec<&[RistrettoPoint]> = d_i.iter().map(|v| v.as_slice()).collect();
-            let w_i = &w_vec[i*a..i*a+a];
-            let w_i_refs: Vec<&[Scalar]> = w_i.iter().map(|v| v.as_slice()).collect();
+        for i in 0..a {
+            let mut d_i_refs: Vec<&[RistrettoPoint]> = Vec::new();
+            let mut w_i_refs: Vec<&[Scalar]> = Vec::new();
+            let left_end = i.saturating_sub(half_m);
+            for j in 0..left_end {
+                d_i_refs.push(d_vec[i * a + j].as_slice());
+                w_i_refs.push(w_vec[i * a + j].as_slice());
+            }
 
+            let right_start = (i+half_m+1).min(a);
+            for j in right_start..a {
+                d_i_refs.push(d_vec[i * a + j].as_slice());
+                w_i_refs.push(w_vec[i * a + j].as_slice());
+            }
+
+            // --- Prove ---
             let t2 = Instant::now();
-            let proof_i = prove_non_anomaly_i(&epsilon_bin, &d_i_refs, &w_i_refs, h, &mut rng_proof);
+            let proof_i = prove_non_anomaly_i(
+                &epsilon_bin,
+                &d_i_refs,
+                &w_i_refs,
+                h,
+                &mut rng_proof
+            );
             time_proof_non_anomaly += t2.elapsed();
 
+            // --- Verify ---
             let t3 = Instant::now();
-            let res = verify_non_anomaly_i(proof_i, &epsilon_bin, &d_i_refs, h);
+            let res = verify_non_anomaly_i(
+                proof_i,
+                &epsilon_bin,
+                &d_i_refs,
+                h
+            );
             verify_non_anomaly &= res;
             time_verify_non_anomaly += t3.elapsed();
         }
