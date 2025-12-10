@@ -386,6 +386,78 @@ pub fn verify_similarity(
     res
 }
 
+pub fn measure_time_comp_similarity(
+    upper: usize,
+    n: usize,   // length of time series
+    m: usize,   // window size
+    u: usize, // number of bits (ℓ)
+    iter: usize,
+    epsilon: u64
+) {
+    let a = n - m + 1; // number of MPD entries (indices i ∈ I
+
+    let mut time_proof_threshold  = Duration::ZERO;
+    let mut time_verify_threshold = Duration::ZERO;
+
+    for _ in 0..iter {
+        let mut rng       = OsRng;
+        let mut rng_k     = OsRng;
+        let mut rng_proof = OsRng;
+
+        // --- 1) Initialize TS and MPD and threshold -------------------------------
+        let ts = random_ecg(&mut rng, n, upper);
+        // println!("{:?}", ts);
+
+        let threshold : Scalar = Scalar::from(epsilon);
+
+        // --- 2) Setup ----------------------------------------------------
+        let mut set = setup(n, &mut rng);
+
+        let g = set.gen;
+        let h = set.h_;
+
+        // --- 3) Commit original time series --------
+        let commitment = commit(&mut set, &ts.to_vec(), &mut rng_k);
+
+        // --- 4) Commit square --------
+        let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&commitment, &set, &mut rng);
+
+        // --- 7) Commit Distance -----
+        let (c_vec, c_bis_vec, w, d_private_bin_vec, d_private_vec) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
+        
+        let c_vec_refs: Vec<&[RistrettoPoint]> = c_vec.iter().map(|inner| inner.as_slice()).collect();
+        let c_bis_vec_refs: Vec<&[RistrettoPoint]> = c_bis_vec.iter().map(|inner| inner.as_slice()).collect();
+        let w_refs : Vec<&[Scalar]> = w.iter().map(|inner| inner.as_slice()).collect();
+        let d_private_bin_refs : Vec<&[Scalar]> = d_private_bin_vec.iter().map(|inner| inner.as_slice()).collect();
+
+        // --- 12) Proof threshold time --------------
+
+        let t2 = Instant::now();
+        let proofs = prove_comp_similarity(threshold, d_private_vec, n, m, u, &c_vec_refs, &w_refs, h, &mut rng_proof);
+        let duration_proof_threshold = t2.elapsed();
+        time_proof_threshold += duration_proof_threshold;
+        println! ("Proof Threshold : {:?}", duration_proof_threshold);
+
+        let t3 = Instant::now();
+        let res = verify_similarity(n, m, u, &proofs, &c_vec_refs, h, threshold);
+        let duration_verify_threshold = t3.elapsed();
+        time_verify_threshold += duration_verify_threshold; 
+        println! ("Verify Threshold : {:?}", duration_verify_threshold);
+
+        println!("==== Verify for Threshold : {} ==== ", res);
+    }
+
+    println!("==== Timing over {} iterations ====", iter);
+    println!("  setup:         {:?}", time_setup/(iter as u32));
+    println!("  commit:        {:?}", time_commit/(iter as u32));
+    println!("  proof (square):   {:?}", time_proof_square/(iter as u32));
+    println!("  verify (square):  {:?}", time_verify_square/(iter as u32));
+    println!("  proof (distance):   {:?}", time_proof_distance/(iter as u32));
+    println!("  verify (distance):  {:?}", time_verify_distance/(iter as u32));
+    println!("  proof (Threshold):   {:?}", time_proof_threshold/(iter as u32));
+    println!("  verify (Threshold):  {:?}", time_verify_threshold/(iter as u32));
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -419,3 +491,4 @@ mod tests{
         assert_eq!(find_ij_smaller_than_threshold(d_ij,possible_ij_set, threshold, a), ground_truth);
     }
 }
+
