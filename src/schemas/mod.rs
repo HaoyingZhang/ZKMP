@@ -8,3 +8,4 @@ pub mod threshold;
 pub mod comp;
 pub mod comp_bis;
 pub mod scenarios;
+pub mod threshold_bis;
