@@ -1,8 +1,18 @@
-use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
 use crate::comp::{simulate_c_and_rr};
-use rand_core::{ CryptoRng, RngCore, CryptoRngCore };  
 use crate::usefulstructs::*;
 use crate::usefulfuncs::{random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
+use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
+use rand_core::{ OsRng, CryptoRng, RngCore, CryptoRngCore };   
+use std::time::{ Instant, Duration }; 
+
+use crate::square::*;        
+use crate::distance::*;  
+use crate::mpd_bin::*;  
+use crate::mpd_exist::*;
+use crate::mpd_min::*;
+use crate::threshold::*;
+use crate::comp::*;
+use crate::commit::*;
 
 pub fn possible_ij_set(n: usize, m: usize) -> Vec<(usize, usize)> {
     let a = n - m + 1;       
@@ -18,24 +28,32 @@ pub fn possible_ij_set(n: usize, m: usize) -> Vec<(usize, usize)> {
     }
     set
 }
+fn scalar_to_u64(x: Scalar) -> u64 {
+    let bytes = x.to_bytes();
+    u64::from_le_bytes(bytes[0..8].try_into().unwrap())
+}
 
 // we can use the distance value to find ij
-pub fn find_ij_smaller_than_threshold(d_ij: Vec<Scalar>, possible_ij_set: Vec<(usize, usize)>, threshold: Scalar, a: usize)->(usize, usize){
-    let mut found : bool = false;
-    let mut res : (usize, usize) = (0,0);
-    for (i,j) in &possible_ij_set{
-        if d_ij[i*a+j].to_bytes()<threshold.to_bytes(){
-            found = true;
-            res = (*i,*j);
-            break;
+pub fn find_ij_smaller_than_threshold(
+    d_ij: Vec<Scalar>,
+    possible_ij_set: Vec<(usize, usize)>,
+    threshold: Scalar,
+    a: usize
+) -> (usize, usize) {
+    
+    let thr = scalar_to_u64(threshold);
+
+    for (i, j) in &possible_ij_set {
+        let value = scalar_to_u64(d_ij[i * a + j]);
+        if value < thr {
+            return (*i, *j);
         }
     }
-    if found == false{
-        println!("Attention! The proof will be wrong since no distance is smaller than the threshold!");
-        res = possible_ij_set[0];
-    }
-    res
+
+    println!("WARNING: No distance smaller than the threshold!");
+    possible_ij_set[0]
 }
+
 
 pub fn simulate_pi_0<T: CryptoRngCore>(
     u_alpha_view: &[usize],
@@ -203,9 +221,19 @@ pub fn prove_comp_similarity<T: CryptoRngCore>(
         }
         c_current_right = c_current;
 
+        cursor += 1;
         for i in stop_term..l{
-            r_j_star[i] = random_scalar(rng_proof);
-            rr_j_star[i] = r_j_star[i] * h;
+            if cursor > alpha || i != u_alpha_view[cursor]{
+                r_j_star[i] = random_scalar(rng_proof);
+                rr_j_star[i] = r_j_star[i] * h;
+            }
+            else{
+                u_j_star[i] = random_scalar(rng_proof);
+                c_j_star[i] = random_scalar(rng_proof);
+                rr_j_star[i] = u_j_star[i] * h - c_j_star[i] * d_ij_star_view[i];
+                cursor += 1;
+            }
+            
         }
     }
     
@@ -260,8 +288,6 @@ pub fn prove_comp_similarity<T: CryptoRngCore>(
         for i in (stop_term+1..l).rev(){
             // println!("i={}", i);
             if i == u_alpha_view[end_ind]{
-                c_j_star[i] = random_scalar(rng_proof);
-                u_j_star[i] = r_j_star[i] + c_j_star[i] * w_ij_star_view[i];
                 c_current -= c_j_star[i];
                 end_ind -= 1;
             }
@@ -329,6 +355,9 @@ pub fn verify_similarity(
     let mut res = true;
 
     let mut chal_aggregated = Scalar::ZERO;
+    let mut rr_agg = Vec::with_capacity(possible_ij_set_length * l);
+    let mut y_agg  = Vec::with_capacity(possible_ij_set_length * l);
+
 
     for (i,j) in &possible_ij_set{
         proof_ij = proofs[cursor].clone();
@@ -348,36 +377,21 @@ pub fn verify_similarity(
             }
             else{
                 res &= c[bit] == c_current;
-                if c[bit] != c_current{
-                    println!("c[bit] == c_current wrong for i={}, j={}, bit={}", i, j, bit);
+                // if c[bit] != c_current{
+                //     println!("c[bit] == c_current wrong for i={}, j={}, bit={}", i, j, bit);
                     
-                }
+                // }
             }
             res &= (rr[bit] == u[bit] * h - c[bit] * y_ij_view[bit]);
-            if rr[bit] != u[bit] * h - c[bit] * y_ij_view[bit]{
-                println!("rr=h^u/y^c wrong for i={}, j={}, bit={}", i, j, bit);
-            }
+            rr_agg.push(rr[bit]);
+            y_agg.push(y_ij_view[bit]);
+            // if rr[bit] != u[bit] * h - c[bit] * y_ij_view[bit]{
+            //     println!("rr=h^u/y^c wrong for i={}, j={}, bit={}", i, j, bit);
+            // }
         }
-        let chal_ij = c[l-1];
+        let chal_ij = c_current;
         chal_aggregated += chal_ij;
         cursor += 1;
-    }
-
-    let mut rr_agg = Vec::with_capacity(possible_ij_set_length * l);
-    let mut y_agg  = Vec::with_capacity(possible_ij_set_length * l);
-
-    let mut buf = 0;
-    for (i, j) in &possible_ij_set {
-        let proof = proofs[buf].clone();
-        let rr = proof.commitments;
-        for x in &rr {
-            rr_agg.push(*x);
-        }
-
-        for d_ij in &y[i*a + j][offset..] {
-            y_agg.push(*d_ij);
-        }
-        buf += 1;
     }
 
     let chal = chal_list(&rr_agg.clone(), &y_agg.clone(), &vec![h; possible_ij_set_length*l]);
@@ -448,12 +462,6 @@ pub fn measure_time_comp_similarity(
     }
 
     println!("==== Timing over {} iterations ====", iter);
-    println!("  setup:         {:?}", time_setup/(iter as u32));
-    println!("  commit:        {:?}", time_commit/(iter as u32));
-    println!("  proof (square):   {:?}", time_proof_square/(iter as u32));
-    println!("  verify (square):  {:?}", time_verify_square/(iter as u32));
-    println!("  proof (distance):   {:?}", time_proof_distance/(iter as u32));
-    println!("  verify (distance):  {:?}", time_verify_distance/(iter as u32));
     println!("  proof (Threshold):   {:?}", time_proof_threshold/(iter as u32));
     println!("  verify (Threshold):  {:?}", time_verify_threshold/(iter as u32));
 }

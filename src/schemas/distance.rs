@@ -5,7 +5,7 @@ use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
 use zeroize::Zeroize;
 use crate::usefulstructs::*;
 use crate::usefulfuncs::{random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
-
+use crate::comp_bis::{possible_ij_set};
 use crate::commit::*;
 // ------------------- Proof distance ---------------------------
 // Zero knowledge proof to prove that the distances have been correctely commited without revealing the values
@@ -43,7 +43,7 @@ pub fn proof_distance_bin_iju<T: CryptoRng + RngCore>(
 
     // verify which condition 
     if *c_iju == wiju * h {
-        let r = random_scalar(rng_proof);   
+        let r = random_scalar(rng_proof); 
         r1 = h * r;  
         z2 = random_scalar(rng_proof);
         c2 = random_scalar(rng_proof);
@@ -129,20 +129,15 @@ pub fn proof_distance<T: CryptoRng + RngCore>(
     c_bis_vec : &[&[RistrettoPoint]],
     w : &[&[Scalar]],
     rng_proof: &mut T,
-) -> Vec<Option<Vec<ProofDistanceiju>>> {
+) -> Vec<Vec<ProofDistanceiju>> {
     let l = n - m + 1;
-    let mut proofs: Vec<Option<Vec<ProofDistanceiju>>> = Vec::with_capacity(l * l);
+    let ij_set = possible_ij_set(n, m);
+    let possible_ij_set_length = ij_set.len();
+    let mut proofs: Vec<Vec<ProofDistanceiju>> = Vec::with_capacity(possible_ij_set_length);
 
-    for i in 0..l {
-        for j in 0..l {
-            if i.abs_diff(j) <= m/2 || j<i{
-                proofs.push(None);
-                continue;
-            }
-            let p_ij = proof_distance_bin_ij(set, &c_vec[i*l+j], &c_bis_vec[i*l+j], &w[i*l+j], u, rng_proof);
-            
-            proofs.push(Some(p_ij));
-        }
+    for (i,j) in &ij_set{
+        let p_ij = proof_distance_bin_ij(set, &c_vec[i*l+j], &c_bis_vec[i*l+j], &w[i*l+j], u, rng_proof);
+        proofs.push(p_ij)
     }
     proofs
 }
@@ -153,22 +148,17 @@ pub fn verify_distance(
     n: usize,
     m: usize,
     set: &Set,
-    proofs: &[Option<&[ProofDistanceiju]>],
+    proofs: &[&[ProofDistanceiju]],
 ) -> bool {
     let l = n - m + 1;
+    let ij_set = possible_ij_set(n, m);
     let mut res = true;
-    for i in 0..l {
-        for j in 0..l {
-            if i.abs_diff(j) <= m/2 { continue; }
-            let idx = i * l + j;
-            match proofs[idx] {
-                Some(pij_proofs) => {
-                    let ok = verify_distance_bin_ij(c_vec[i*l+j], c_bis_vec[i*l+j], set, pij_proofs);
-                    res &= ok;
-                }
-                _ => {}
-            }
-        }
+    let mut cursor = 0;
+    for (i,j) in &ij_set{
+        let pij_proofs = proofs[cursor];
+        let ok = verify_distance_bin_ij(c_vec[i*l+j], c_bis_vec[i*l+j], set, pij_proofs);
+        res &= ok;
+        cursor += 1;
     }
     res
 }
@@ -221,8 +211,8 @@ pub fn measure_time_proof_distance(
         let proofs_owned = proof_distance(n, m, u, &set, &c_vec_refs, &c_bis_vec_refs, &w_refs, &mut rng_proof);
         time_proof_distance += t2.elapsed();
 
-        // Convert owned Vec<Option<Vec<_>>> -> borrowed Vec<Option<&[_]>>
-        let proofs_borrowed: Vec<Option<&[ProofDistanceiju]>> = proofs_owned.iter().map(|opt| opt.as_deref()).collect();
+        // Convert owned Vec<Vec<_>> -> borrowed Vec<&[_]>
+        let proofs_borrowed: Vec<&[ProofDistanceiju]> = proofs_owned.iter().map(|opt| opt.as_slice()).collect();
 
         // --- Verify (distance) ---
         let t3 = Instant::now();

@@ -124,7 +124,7 @@ pub fn measure_time_non_similarity(
         println!("Proof distance : {:?}", duration_proof_distance);
 
         // Convert owned Vec<Option<Vec<_>>> -> borrowed Vec<Option<&[_]>>
-        let proofs_borrowed: Vec<Option<&[ProofDistanceiju]>> = proofs_owned.iter().map(|opt| opt.as_deref()).collect();
+        let proofs_borrowed: Vec<&[ProofDistanceiju]> = proofs_owned.iter().map(|opt| opt.as_slice()).collect();
 
         // --- 9) Verify (distance) ---
         let t3 = Instant::now();
@@ -374,7 +374,7 @@ pub fn measure_time_non_anomaly(
         println!("Proof distance : {:?}", duration_proof_distance);
 
         // Convert owned Vec<Option<Vec<_>>> -> borrowed Vec<Option<&[_]>>
-        let proofs_borrowed: Vec<Option<&[ProofDistanceiju]>> = proofs_owned.iter().map(|opt| opt.as_deref()).collect();
+        let proofs_borrowed: Vec<&[ProofDistanceiju]> = proofs_owned.iter().map(|opt| opt.as_slice()).collect();
 
         // --- 9) Verify (distance) ---
         let t3 = Instant::now();
@@ -518,7 +518,7 @@ pub fn measure_time_similarity(
         println!("Proof distance : {:?}", duration_proof_distance);
 
         // Convert owned Vec<Option<Vec<_>>> -> borrowed Vec<Option<&[_]>>
-        let proofs_borrowed: Vec<Option<&[ProofDistanceiju]>> = proofs_owned.iter().map(|opt| opt.as_deref()).collect();
+        let proofs_borrowed: Vec<&[ProofDistanceiju]> = proofs_owned.iter().map(|opt| opt.as_slice()).collect();
 
         // --- 9) Verify (distance) ---
         let t3 = Instant::now();
