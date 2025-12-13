@@ -173,10 +173,10 @@ pub fn measure_time_proof_square(
         let ts = random_ecg(&mut rng, n, upper);
 
         // Commit:
-        let start_commit = Instant::now();
+        
         // ----------- General commit -------------- //
         let c: Commit = commit(&mut set, &ts, &mut rng_k); // commit of device
-
+        let start_commit = Instant::now();
         let (c_diff, c_tilde, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng);
 
         let duration_commit = start_commit.elapsed();

@@ -13,6 +13,7 @@ use zkmp::comp_bis::*;
 use zkmp::threshold::*;
 use zkmp::scenarios::*;
 use zkmp::threshold_bis::*;
+use zkmp::commit::*;
 
 
 fn main() {
@@ -24,11 +25,13 @@ fn main() {
     let n: usize = 1000;
     let upper: usize = 45;
     let u: usize = 20; // u=13, u=15 and u=20
-    let m: usize = 100;
+    let m: usize = 3;
     let l = n.checked_sub(m).and_then(|x| x.checked_add(1)).expect("n must be >= m - 1");
-    let iter: usize = 10;
+    let iter: usize = 100;
     let threshold_anomaly = 300000;
     let threshold_similarity = 11;
+
+    measure_signature(upper, n, iter);
 
     // measure_time_non_similarity(upper, n, m, u, iter, threshold_similarity);
 
@@ -52,6 +55,6 @@ fn main() {
 
     // measure_time_comp_similarity(upper, n, m, u, iter, threshold_similarity);
 
-    measure_time_comp_anomaly(upper, n, m, u, iter, threshold_similarity);
+    // measure_time_comp_anomaly(upper, n, m, u, iter, threshold_similarity);
     
 }

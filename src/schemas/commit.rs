@@ -6,7 +6,7 @@ use std::time::{ Instant, Duration };
 use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
 use zeroize::Zeroize;
 use crate::usefulstructs::*;
-use crate::usefulfuncs::{random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
+use crate::usefulfuncs::{hash, random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
 
 // Generate a setup set:
 pub fn setup<T: CryptoRng + RngCore>(n: usize, rng: &mut T) -> Set {
@@ -184,3 +184,98 @@ pub fn calculate_mpd_commit<T: CryptoRng + RngCore>(
 
     (m_vec, m_bis_vec, z_vec)
 }
+
+// Generate a public/ secret key:
+pub fn gen_key_c<T: CryptoRng + RngCore>(rng: &mut T, g: RistrettoPoint) -> (Scalar, RistrettoPoint) {
+    let secret_key = random_scalar(rng);
+    let public_key = secret_key * g;
+    return (secret_key, public_key);
+}
+
+// Generate a signature of Commitment:
+pub fn sign<T: CryptoRng + RngCore>(rng: &mut T, c: &Vec<RistrettoPoint>, g: RistrettoPoint, pubk: RistrettoPoint, secretk: Scalar) -> Signature {
+
+    let mut rand = random_scalar(rng);
+    let r_ = rand * g;
+    
+    // Challenge:
+    let mut prehash: Vec<[u8; 32]> = Vec::new();
+    prehash.push(*(g.compress()).as_bytes());
+    prehash.push(*(pubk.compress()).as_bytes());
+    prehash.push(*(r_.compress()).as_bytes());
+    for ci in c{
+        prehash.push(*(ci.compress()).as_bytes());
+    }
+    
+    let chal = hash(prehash);
+    
+    // Response:
+    let z_ = rand + chal * secretk;
+    
+    rand.zeroize();
+    
+    return Signature { r: r_, z: z_ };
+}
+
+// Verify the signature:
+pub fn ver(c: &Vec<RistrettoPoint>, g: RistrettoPoint, pubk: RistrettoPoint, s: Signature) -> bool {
+
+    let r_ = s.r;
+    let z_ = s.z;
+    
+    // Challenge:
+    let mut prehash: Vec<[u8; 32]> = Vec::new();
+    prehash.push(*(g.compress()).as_bytes());
+    prehash.push(*(pubk.compress()).as_bytes());
+    prehash.push(*(r_.compress()).as_bytes());
+    for ci in c {
+        prehash.push(*(ci.compress()).as_bytes());
+    }
+    
+    let chal = hash(prehash);
+    
+    // Test:
+    if r_ == z_ * g - chal * pubk {
+    return true;
+    }
+    return false;
+}
+
+pub fn measure_signature(upper: usize, n: usize, iter: usize){
+    let mut time_gen : Duration = Duration::ZERO;
+    let mut time_commit : Duration = Duration::ZERO;
+    let mut time_sign : Duration = Duration::ZERO;
+    let mut time_ver  : Duration= Duration::ZERO;
+    let mut rng       = OsRng;
+
+    for _ in 0..iter{
+        let ts = random_ecg(&mut rng, n, upper);
+        let mut set = setup(n, &mut rng);
+
+        let g = set.gen;
+
+        // --- 3) Commit original time series --------
+        let t0 = Instant::now();
+        let commitment = commit(&mut set, &ts.to_vec(), &mut rng);
+        time_commit += t0.elapsed();
+        
+        let t1 = Instant::now();
+        let (secret_key, public_key) = gen_key_c(&mut rng, g);
+        time_gen += t1.elapsed();
+
+        let t2 = Instant::now();
+        let sig = sign(&mut rng, &commitment.c_, g, public_key, secret_key);
+        time_sign += t2.elapsed();
+
+        let t3 = Instant::now();
+        let ver = ver(&commitment.c_, g, public_key, sig);
+        time_ver += t3.elapsed();
+    }
+
+    println!("==== Timing over {} iterations ====", iter);
+    println!("  key gen :   {:?}", time_gen/(iter as u32));
+    println!("  commit :   {:?}", time_commit/(iter as u32));
+    println!("  sign :  {:?}", time_sign/(iter as u32));
+    println!("  verify :  {:?}", time_ver/(iter as u32));
+}
+
