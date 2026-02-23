@@ -18,6 +18,11 @@ pub struct Commit {
     pub x_: Vec<Scalar> // time series
 }
 
+pub struct Signature { 
+    pub r: RistrettoPoint, 
+    pub z: Scalar 
+}
+
 // Witness for a pair (i,j): (x_ij, k_ij).
 pub struct PairWitness {
     pub x_ij: Scalar,  // x_i - x_j

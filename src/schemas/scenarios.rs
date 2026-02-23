@@ -311,6 +311,7 @@ pub fn measure_time_non_anomaly(
             .collect();
             
         let epsilon_bin_val = scalar_to_bits(&Scalar::from(epsilon), u);
+        let epsilon_scalar = Scalar::from(epsilon);
         let mut epsilon_bin : Vec<usize> = Vec::with_capacity(u);
         for bit in 0..epsilon_bin_val.len(){
             if epsilon_bin_val[bit] == Scalar::ZERO{
@@ -355,12 +356,11 @@ pub fn measure_time_non_anomaly(
 
         // --- 7) Commit Distance -----
         let start_commit_distance = Instant::now();
-        let (c_vec, c_bis_vec, w, d_private_vec, _) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
+        let (c_vec, c_bis_vec, w, _, d_private_vec) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
         
         let c_vec_refs: Vec<&[RistrettoPoint]> = c_vec.iter().map(|inner| inner.as_slice()).collect();
         let c_bis_vec_refs: Vec<&[RistrettoPoint]> = c_bis_vec.iter().map(|inner| inner.as_slice()).collect();
         let w_refs : Vec<&[Scalar]> = w.iter().map(|inner| inner.as_slice()).collect();
-        let d_private_refs : Vec<&[Scalar]> = d_private_vec.iter().map(|inner| inner.as_slice()).collect();
         
         let duration_commit_distance = start_commit_distance.elapsed();
         time_commit += duration_commit_distance;
@@ -395,14 +395,24 @@ pub fn measure_time_non_anomaly(
         let mut verify_non_anomaly : bool = true;
         let mut t2 : Instant;
         let mut t3 : Instant;
+        let half_m = m / 2;
 
         for i in 0..a{
             // println!("==== i = {} ==== ", i);
-            let d_i_refs = &c_vec_refs[i*a..i*a+a];
-            let w_i_refs = &w_refs[i*a..i*a+a];
+            let mut d_i_refs: Vec<&[RistrettoPoint]> = Vec::new();
+            let mut w_i_refs: Vec<&[Scalar]> = Vec::new();
+            let mut d_private_i_refs : Vec<Scalar> = Vec::new();
+
+            let left_end = i.saturating_sub(half_m);
+            let right_start = (i+half_m+1).min(a);
+            for j in (0..left_end).chain((right_start..a)) {
+                d_i_refs.push(c_vec_refs[i * a + j]);
+                w_i_refs.push(w_refs[i * a + j]);
+                d_private_i_refs.push(d_private_vec[i * a + j]);
+            }
 
             t2 = Instant::now();
-            let proof_i = prove_non_anomaly_i(&epsilon_bin, &d_i_refs, &w_i_refs, h, &mut rng_proof);
+            let proof_i = prove_non_anomaly_i(epsilon, &d_private_i_refs, &epsilon_bin, &d_i_refs, &w_i_refs, h, &mut rng_proof);
             time_proof_non_anomaly += t2.elapsed();
 
             t3 = Instant::now();

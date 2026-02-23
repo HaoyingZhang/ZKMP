@@ -4,7 +4,7 @@ use std::time::{ Instant, Duration };
 use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
 use zeroize::Zeroize;
 use crate::usefulstructs::*;
-use crate::usefulfuncs::{scalar_to_u64, random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
+use crate::usefulfuncs::{random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
 
 use crate::commit::*;
 
@@ -78,8 +78,6 @@ mod tests {
 }
 
 pub fn prove_non_anomaly_i<T: CryptoRngCore>(
-    thr: u64, // threshold
-    dist_vec: &[Scalar], // private distances of d_ij
     u_alpha: &[usize], // zero bits indices
     d_vec: &[&[RistrettoPoint]], // D_iju the commitments of d_iju
     w_vec: &[&[Scalar]], // w_iju the secret key of d_iju
@@ -87,17 +85,21 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
     rng_proof: &mut T
 )->Vec<ZKthresholdi>{
     let a = d_vec.len(); //number of j
-    // println!("length of j {}", a); 
+    // println!("length of j {}", a);
     let offset = u_alpha[0];
     let u_alpha_view : Vec<usize> = u_alpha.iter().map(|val| val-offset).collect();
-    let alpha = u_alpha_view.len() - 1;
     // println!("u alpha : {:?}", u_alpha_view);
-    let l = d_vec[0].len() - offset; // bit length
+    let l = d_vec[0].len() - offset;
     let mut d_ij : &[RistrettoPoint];
     let mut w_ij : &[Scalar];
     let mut j_star = a; // when no j_star found
     for j in 0..a{
-        if scalar_to_u64(dist_vec[j]) < thr{
+        d_ij = d_vec[j];
+        w_ij = w_vec[j];
+        let d_ij_view : &[RistrettoPoint] = &d_ij[offset..];
+        let w_ij_view : &[Scalar] = &w_ij[offset..];
+        let rel_list : Vec<bool> = (0..l).map(|bit| d_ij_view[bit]==w_ij_view[bit]*h).collect();
+        if relation_check(&rel_list, l, &u_alpha_view){
             j_star = j;
             break;
         }
@@ -110,7 +112,7 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
     let mut simulate_chal_sum = Scalar::ZERO;
     for j in 0..a{
         if j != j_star{
-            let (proof_j, chal_j) = simulate_pi_0(&u_alpha_view, &d_vec[j][offset..], h, rng_proof);
+            let (proof_j, chal_j) = simulate_pi_1(&u_alpha_view, &d_vec[j][offset..], h, rng_proof);
             simulate_proofs.push(proof_j);
             simulate_chal_sum += chal_j;
         }
@@ -127,96 +129,128 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
     let mut c_j_star: Vec<Scalar> = vec![Scalar::ZERO; l];
 
     // deduce the bool list for j_star
-    let mut stop_term = None;
+    let mut rel_list_j_star : Vec<bool> = vec![false;l];
+    for ind in &u_alpha_view{
+        rel_list_j_star[*ind] = true;
+    }
+    let last = u_alpha_view.len()-1; // 0
+    let mut first_true_from_right = 0;
+    let mut nearest_alpha_index_right = 0; 
+    let mut nearest_alpha_index_left = l-1;
+    let mut found = false;
 
-    for index in (0..alpha+1).rev() {
-        let ind = u_alpha_view[index];
-        if d_ij_star_view[ind] == w_ij_star_view[ind] * h {
-            stop_term = Some(ind);
+    // deduce rel list
+    for seg_id in 0..=last {
+        let (min, max) = if seg_id == 0 {
+            // premier segment : (u_alpha[last] + 1 .. l)
+            (u_alpha_view[last], l)
+        } else {
+            // ensuite : (u_alpha[last - seg_id] + 1 .. u_alpha[last - seg_id + 1])
+            let ind_u = last - seg_id;
+            (u_alpha_view[ind_u], u_alpha_view[ind_u + 1])
+        };
+        for t in min + 1..max {
+            if d_ij_star_view[t] == w_ij_star_view[t] * h {
+                first_true_from_right = t;
+                found = true;
+                nearest_alpha_index_right = min;
+                nearest_alpha_index_left = max;
+                for j in 0..=t {
+                    rel_list_j_star[j] = j == t;
+                }
+                break;
+            }
+        }
+        if found{
             break;
         }
     }
-    let stop_term = stop_term.expect("No true term in the ij star");
-    // println!("stop term = {}", stop_term);
+    // println!("list real : {:?}", rel_list_j_star);
+    // println!("First true from right: {}", first_true_from_right);
+    // println!("Nearest alpha from right: {}", nearest_alpha_index_right);
+    // println!("Nearest alpha from left: {}", nearest_alpha_index_left);
+    // println!("alpha = {}", last);
 
     // generate the alea 
-    // for i in 0..l{
-    //     if rel_list_j_star[i]{
-    //         r_j_star[i] = random_scalar(rng_proof);
-    //         rr_j_star[i] = r_j_star[i] * h;
-    //     }else{
-    //         u_j_star[i] = random_scalar(rng_proof);
-    //     }
-    // }
+    for i in 0..l{
+        if rel_list_j_star[i]{
+            r_j_star[i] = random_scalar(rng_proof);
+            rr_j_star[i] = r_j_star[i] * h;
+        }else{
+            u_j_star[i] = random_scalar(rng_proof);
+        }
+    }
 
-    let mut c_current_right = Scalar::ZERO;
-    if stop_term == 0{
-        // stop in the last relation, prove all big et, simule all u_alpha except 0
-        let mut cursor = 1;
+    // if the first true is in the last parenthesis, simulate challenges for all the false term
+    if first_true_from_right < u_alpha_view[1]{
+        assert!(nearest_alpha_index_right == 0);
         for i in 0..l{
-            if cursor <= alpha && i == u_alpha_view[cursor]{
-                // simule
-                u_j_star[i] = random_scalar(rng_proof);
-                let _ = simulate_c_and_rr(i,
+            if rel_list_j_star[i]==false{
+                c_j_star[i] = random_scalar(rng_proof);
+                rr_j_star[i] = w_ij_star_view[i] * h - c_j_star[i] * d_ij_star_view[i];
+            }
+        }
+    }else{
+        let mut buffer_sum = Scalar::ZERO;
+        for i in 0..u_alpha_view[1]{
+            let buffer = simulate_c_and_rr(
+                i,
+                &mut c_j_star, 
+                &mut rr_j_star, 
+                &d_ij_star_view, 
+                &u_j_star, 
+                h,
+                rng_proof
+            );
+            buffer_sum += buffer;
+        }
+        // println!("calculated sum challenge for index: {}", u_alpha_view[1]);
+        c_j_star[u_alpha_view[1]] = buffer_sum;
+        rr_j_star[u_alpha_view[1]] = u_j_star[u_alpha_view[1]] * h  - c_j_star[u_alpha_view[1]] * d_ij_star_view[u_alpha_view[1]];
+
+        let mut end = 2;
+        while end < u_alpha_view.len() && u_alpha_view[end]<=nearest_alpha_index_right {
+            buffer_sum = Scalar::ZERO;
+            for i in u_alpha_view[end-1]+1..u_alpha_view[end]{
+                let alea_c = simulate_c_and_rr(
+                    i,
                     &mut c_j_star, 
                     &mut rr_j_star, 
                     &d_ij_star_view, 
                     &u_j_star, 
                     h,
-                    rng_proof
-                );
-                cursor += 1;
+                    rng_proof);
+                buffer_sum += alea_c;
             }
-            else{
-                r_j_star[i] = random_scalar(rng_proof);
-                rr_j_star[i] = r_j_star[i] * h;
-            }
+            // println!("calculated sum challenge for index: {}", u_alpha_view[end]);
+            c_j_star[u_alpha_view[end]] = buffer_sum + c_j_star[u_alpha_view[end-1]];
+            rr_j_star[u_alpha_view[end]] = u_j_star[u_alpha_view[end]] * h - c_j_star[u_alpha_view[end]] * d_ij_star_view[u_alpha_view[end]];
+            end += 1;
         }
-    }
-    else{
-        // stop in relation k, prove all big et in the left, simulate all terms in the right
-        u_j_star[0] = random_scalar(rng_proof);
-        let c_0 = simulate_c_and_rr(0, &mut c_j_star, 
-            &mut rr_j_star, 
-            &d_ij_star_view, 
-            &u_j_star, 
-            h,
-            rng_proof
-        );
-        let mut cursor = 1;
-        let mut c_current = c_0;
-        for i in 1..stop_term{
-            if i == u_alpha_view[cursor]{
-                u_j_star[i] = random_scalar(rng_proof);
-                let c_i = simulate_c_and_rr(i, &mut c_j_star, 
+        // calculate the random for indices from index_right to index_left
+        for i in nearest_alpha_index_right+1..nearest_alpha_index_left{
+            // println!("Entrer ici: nearest_alpha_index_right = {}, left = {}", nearest_alpha_index_right, nearest_alpha_index_left);
+            if rel_list_j_star[i] == false{
+                let _ = simulate_c_and_rr(
+                    i,
+                    &mut c_j_star, 
                     &mut rr_j_star, 
                     &d_ij_star_view, 
                     &u_j_star, 
                     h,
-                    rng_proof
-                );
-                c_current += c_i;
-                cursor += 1;
-            }
-            else{
-                u_j_star[i] = random_scalar(rng_proof);
-                c_j_star[i] = c_current;
-                rr_j_star[i] = u_j_star[i] * h - c_j_star[i] * d_ij_star_view[i];
+                    rng_proof);
             }
         }
-        c_current_right = c_current;
-        // println!("j_star = {}, cursor = {}", j_star, cursor);
-        cursor += 1;
-        for i in stop_term..l{
-            if cursor > alpha || i != u_alpha_view[cursor]{
-                r_j_star[i] = random_scalar(rng_proof);
-                rr_j_star[i] = r_j_star[i] * h;
-            }
-            else{
-                u_j_star[i] = random_scalar(rng_proof);
-                c_j_star[i] = random_scalar(rng_proof);
-                rr_j_star[i] = u_j_star[i] * h - c_j_star[i] * d_ij_star_view[i];
-                cursor += 1;
+        for i in nearest_alpha_index_left+1..l{
+            if rel_list_j_star[i]==false{
+                let _ = simulate_c_and_rr(
+                    i,
+                    &mut c_j_star, 
+                    &mut rr_j_star, 
+                    &d_ij_star_view, 
+                    &u_j_star, 
+                    h,
+                    rng_proof);
             }
         }
     }
@@ -254,39 +288,52 @@ pub fn prove_non_anomaly_i<T: CryptoRngCore>(
     // deduce chal_j_star
     let chal_j_star = chal - simulate_chal_sum;
 
-    // complete
-    if stop_term == 0{
-        let mut c_current = chal_j_star;
-        let mut end_ind = alpha;
-        for i in (0..l).rev(){
-            if end_ind > 0 && i == u_alpha_view[end_ind]{
-                c_current -= c_j_star[i];
-                end_ind -= 1;
-            }
-            else{
-                c_j_star[i] = c_current;
-                u_j_star[i] = r_j_star[i] + c_j_star[i] * w_ij_star_view[i];
+    // calculate c and u for the term true for j_star
+    if first_true_from_right > u_alpha_view[last]{
+        // println!("Entered in this block!"); 
+        let mut buffer = Scalar::ZERO;
+        for i in u_alpha_view[last]..l{
+            if i != first_true_from_right{
+                buffer += c_j_star[i];
             }
         }
-    } else { // stop_term > 0
-        let mut c_current = chal_j_star;
-        let mut end_ind = alpha;
-
-        // 1. Fill the Right side (stop_term + 1 to l)
-        for i in (stop_term + 1..l).rev() {
-            if i == u_alpha_view[end_ind] {
-                c_current -= c_j_star[i];
-                end_ind -= 1;
-            } else {
-                c_j_star[i] = c_current;
-                u_j_star[i] = r_j_star[i] + c_j_star[i] * w_ij_star_view[i];
+        c_j_star[first_true_from_right] = chal_j_star - buffer;
+        u_j_star[first_true_from_right] = r_j_star[first_true_from_right] + c_j_star[first_true_from_right] * w_ij_star_view[first_true_from_right];
+        
+    }
+    else{
+        // println!("Relation at index 0: {:?}", rel_list_j_star[0]);
+        let mut buffer = Scalar::ZERO;
+        for i in u_alpha_view[last]+1..l{
+            buffer += c_j_star[i];
+        }
+        c_j_star[u_alpha_view[last]] = chal_j_star - buffer;
+        u_j_star[u_alpha_view[last]] = r_j_star[u_alpha_view[last]] + c_j_star[u_alpha_view[last]]*w_ij_star_view[u_alpha_view[last]];
+        
+        let mut end = last-1;
+        while u_alpha_view[end] >= nearest_alpha_index_left{
+            let mut sum = c_j_star[u_alpha_view[end+1]];
+            for i in u_alpha_view[end]+1..u_alpha_view[end+1]{
+                sum -= c_j_star[i];
+            }
+            c_j_star[u_alpha_view[end]] = sum;
+            u_j_star[u_alpha_view[end]] = r_j_star[u_alpha_view[end]] + c_j_star[u_alpha_view[end]] * w_ij_star_view[u_alpha_view[end]];
+            
+            end -= 1;
+        }
+        
+        buffer = c_j_star[nearest_alpha_index_left];
+        for i in nearest_alpha_index_right..nearest_alpha_index_left{
+            if i != first_true_from_right{
+                buffer -= c_j_star[i]; 
             }
         }
-
-        // 2. Set the Bridge (stop_term)
-        c_j_star[stop_term] = c_current - c_current_right;
-        u_j_star[stop_term] = r_j_star[stop_term] + c_j_star[stop_term] * w_ij_star_view[stop_term];
-
+        c_j_star[first_true_from_right] = buffer;
+        u_j_star[first_true_from_right] = r_j_star[first_true_from_right] + c_j_star[first_true_from_right] * w_ij_star_view[first_true_from_right];
+        
+        for i in 0..l{
+            assert!(u_j_star[i] != Scalar::ZERO);
+        }
     }
     let proof_j_star = ZKthresholdi{commitments: rr_j_star, challenges: c_j_star, responses: u_j_star};
     let mut proofs : Vec<ZKthresholdi> = Vec::with_capacity(a);
@@ -325,10 +372,10 @@ pub fn simulate_c_and_rr<T: CryptoRngCore>(
     return buffer;
 }
 
-// simulation proof
-pub fn simulate_pi_0<T: CryptoRngCore>(
+// simulation proof for a given j
+pub fn simulate_pi_1<T: CryptoRngCore>(
     u_alpha_view: &[usize],
-    d_ij_view: &[RistrettoPoint],
+    d_ij_view: &[RistrettoPoint], // binary
     h: RistrettoPoint,
     rng_proof: &mut T
 )->(ZKthresholdi,Scalar){
@@ -339,31 +386,41 @@ pub fn simulate_pi_0<T: CryptoRngCore>(
     // compute the responses
     let u : Vec<Scalar> = (0..l).map(|_| random_scalar(rng_proof)).collect(); // responses
 
+    // compute c
     let alpha = u_alpha_view.len()-1;
-    let mut begin: usize;
-    let mut end: usize;
-    
+    let mut begin : usize;
+    let mut end : usize;
+    let mut sum_buffer : Scalar;
+
     c[0] = random_scalar(rng_proof);
-    let mut cursor = 1;
-    let mut c_current = c[0];
-    for i in 0..l{
-        if cursor <= alpha && i == u_alpha_view[cursor]{
-            c[i] = random_scalar(rng_proof);
-            c_current += c[i];
-            cursor += 1;
+    for cursor in 0..alpha{
+        begin = u_alpha_view[cursor]+1;
+        end = u_alpha_view[cursor+1];
+        sum_buffer = Scalar::ZERO;
+        for k in begin..end{
+            let buffer_ = random_scalar(rng_proof);
+            c[k] = buffer_;
+            sum_buffer += buffer_;
         }
-        else{
-            c[i] = c_current;
-        }
+        c[end] = sum_buffer + c[begin-1];
     }
-    // sanity check and compute the commitements R
+
+    // calculate the challenge sum
+    let mut sum_challenge = Scalar::ZERO;
+    for i in u_alpha_view[alpha]+1..l{
+        let buffer_ = random_scalar(rng_proof);
+        c[i] = buffer_;
+        sum_challenge += buffer_;
+    }
+    sum_challenge += c[u_alpha_view[alpha]];
+
+    // compute the commitements R
     for i in 0..l{
-        assert!(c[i]!=Scalar::ZERO);
         rr.push(u[i]*h - c[i]*d_ij_view[i]);
     }
-    let challenge_pi = c_current;
 
-    (ZKthresholdi{commitments: rr, challenges: c, responses: u}, challenge_pi)
+    (ZKthresholdi{commitments: rr, challenges: c, responses: u}, sum_challenge)
+
 }
 
 pub fn verify_non_anomaly_j(
@@ -376,7 +433,6 @@ pub fn verify_non_anomaly_j(
 	let rr = &proof.commitments;
 	let c = &proof.challenges;
 	let u = &proof.responses;
-    let alpha = epsilon_bin.len()-1;
 
     let offset = epsilon_bin[0];
 
@@ -386,30 +442,29 @@ pub fn verify_non_anomaly_j(
 	
 	// Recomputes the general challenge
     let y_view = &y[offset..];  
-
-	let mut res = true;
-	let mut cursor = 1;
-    let mut c_current = c[0];
-    for i in 0..l{
-        if cursor <= alpha && i == epsilon_bin[cursor]{
-            c_current += c[i];
-            cursor += 1;
+	
+	for b in 0..epsilon_bin.len() - 1 {
+        let left = epsilon_bin[b] - offset;
+        let right = epsilon_bin[b+1] - offset;
+    
+        let mut c_sum = Scalar::ZERO;
+        for j in left..right {
+            c_sum += c[j];
         }
-        else{
-            res &= c[i] == c_current;
-            if res == false{
-                println!("challenge bit wrong for bit = {}", i);
-            }
+    
+        if c[right] != c_sum {
+            println!("False , block {}", b);
+            return false;
         }
     }
 
     for i in 0..l{
-		res &= rr[i] == u[i] * h - c[i] * y_view[i];
-        if res == false{
-            println!("condition verification failed for bit = {}", i);
-        }
+		if rr[i] != u[i] * h - c[i] * y_view[i]{
+            println!("response verification failed for {}", i);
+			return false	
+		}
 	}
-	return res
+	return true
 }
 
 pub fn verify_non_anomaly_i(
@@ -421,7 +476,7 @@ pub fn verify_non_anomaly_i(
     let a = proofs.len();
     let offset = u_alpha[0];
     let u_alpha_view : Vec<usize> = u_alpha.iter().map(|val| val-offset).collect();
-    let alpha = u_alpha_view.len()-1;
+    let alpha = u_alpha_view[u_alpha_view.len()-1];
     let l = d_vec[0].len() - offset;
 
     let mut rr_aggregated : Vec<RistrettoPoint> = Vec::with_capacity(a*l);
@@ -438,25 +493,17 @@ pub fn verify_non_anomaly_i(
         let d_ij = d_vec[j];
         let d_ij_view = &d_ij[offset..];
 
-        let verify_j = verify_non_anomaly_j(&proof_j, d_ij_view.to_vec(), h, &u_alpha_view);
-        if verify_j == false{
-            println!("error j = {}", j);
-        }
+        let verify_j = verify_non_anomaly_j(&proof_j, d_ij.to_vec(), h, u_alpha);
+
         res &= verify_j;
 
         // if verify_j == false{
         //     println!("Error in verify threshold i for j = {}", j);
         // }
-        let mut cursor = 1;
-        let mut cj = c_j[0];
-        for bit in 0..l{
-            if cursor <= alpha && bit == u_alpha_view[cursor]{
-                cj += c_j[bit];
-                cursor += 1;
-            }
+
+        for i in alpha..l{
+            chal_aggregated += c_j[i];
         }
-        chal_aggregated += cj;
-        
 
         for rr in rr_j{
             rr_aggregated.push(rr.clone());
@@ -509,48 +556,41 @@ pub fn measure_time_comp(
 
         let (_, _, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&c, &set, &mut rng_proof);
         
-        let (d_vec, _, w_vec, _, d_private_vec) = calculate_dist_commit(&mut rng_proof, n, m, ell, g, h, &x_diff, &k_diff, &k_tilde);
+        let _t1 = Instant::now();
+        let (d_vec, _, w_vec, _, _) = calculate_dist_commit(&mut rng_proof, n, m, ell, g, h, &x_diff, &k_diff, &k_tilde);
 
-        
         // calculate u_alpha list
         let epsilon_bin_val = scalar_to_bits(&Scalar::from(epsilon), ell);
         let mut epsilon_bin : Vec<usize> = Vec::with_capacity(ell);
         for bit in 0..epsilon_bin_val.len(){
-            if epsilon_bin_val[bit] == Scalar::ONE{
+            if epsilon_bin_val[bit] == Scalar::ZERO{
                 epsilon_bin.push(bit);
             }
         }
-        
+
+        time_commit += _t1.elapsed();
+
         let a = n - m + 1;
         let half_m = m/2;
         let mut verify_non_anomaly : bool = true;
         for i in 0..a {
-
-            let t2 = Instant::now();
-            
-            // println!("i = {}", i);
             let mut d_i_refs: Vec<&[RistrettoPoint]> = Vec::new();
             let mut w_i_refs: Vec<&[Scalar]> = Vec::new();
-            let mut d_private_i_refs : Vec<Scalar> = Vec::new();
             let left_end = i.saturating_sub(half_m);
             for j in 0..left_end {
                 d_i_refs.push(d_vec[i * a + j].as_slice());
                 w_i_refs.push(w_vec[i * a + j].as_slice());
-                d_private_i_refs.push(d_private_vec[i * a + j]);
             }
 
             let right_start = (i+half_m+1).min(a);
             for j in right_start..a {
                 d_i_refs.push(d_vec[i * a + j].as_slice());
                 w_i_refs.push(w_vec[i * a + j].as_slice());
-                d_private_i_refs.push(d_private_vec[i * a + j]);
             }
 
             // --- Prove ---
-            
+            let t2 = Instant::now();
             let proof_i = prove_non_anomaly_i(
-                epsilon,
-                &d_private_i_refs,
                 &epsilon_bin,
                 &d_i_refs,
                 &w_i_refs,

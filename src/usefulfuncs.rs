@@ -45,6 +45,11 @@ pub fn generate_ristretto_point(x: Scalar) -> RistrettoPoint{
     return g;
 }
 
+pub fn scalar_to_u64(x: Scalar) -> u64 {
+    let bytes = x.to_bytes();
+    u64::from_le_bytes(bytes[0..8].try_into().unwrap())
+}
+
 // Hash a vector of bytes:
 pub fn hash(digest: Vec<[u8;32]>) -> Scalar{
 

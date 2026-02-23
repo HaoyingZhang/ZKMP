@@ -1,7 +1,7 @@
 use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
 use crate::comp_bis::{simulate_pi_0, scalar_to_u64};
 use rand_core::{ CryptoRng, RngCore, CryptoRngCore, OsRng };  
-use crate::comp::{simulate_c_and_rr};
+use crate::comp_bis::*;
 use crate::usefulstructs::*;
 use crate::usefulfuncs::{random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
 use std::time::{ Instant, Duration }; 
@@ -15,36 +15,21 @@ use crate::threshold::*;
 use crate::comp::*;
 use crate::commit::*;
 
-// there is a distance sup than epsilon
+// all the distances sup than delta
 
-// we can use the distance value to find ij
-pub fn find_mpd_i_bigger_than_threshold(mpd: Vec<Scalar>, threshold: Scalar, a: usize)->usize{
-    let thr = scalar_to_u64(threshold);
-
-    for i in 0..mpd.len() {
-        let value = scalar_to_u64(mpd[i].clone());
-        if value > thr {
-            return i;
-        }
-    }
-
-    println!("WARNING: No distance bigger than the threshold!");
-    0
-}
-
-pub fn prove_comp_anomaly<T: CryptoRngCore>(
+pub fn prove_comp_no_sim<T: CryptoRngCore>(
     threshold: Scalar,
-    mpd_vec_bin: Vec<Scalar>,
     n: usize,
     m: usize,
     u: usize,
-    m_bis_vec: &[&[RistrettoPoint]],
-    z_vec:  &[&[Scalar]],
+    d_ij_bis_vec: &[&[RistrettoPoint]],
+    w_ij_vec:  &[&[Scalar]],
     h: RistrettoPoint,
     rng_proof: &mut T
 )->Vec<ZKthresholdi>{
     let a = n-m+1;
-    assert_eq!(mpd_vec_bin.len(),a);
+    let ij_set = possible_ij_set(n, m);
+    let ij_set_length = ij_set.len();
     let epsilon_bin_val = scalar_to_bits(&Scalar::from(threshold), u);
     let mut u_alpha : Vec<usize> = Vec::with_capacity(u);
     for bit in 0..u{
@@ -56,24 +41,72 @@ pub fn prove_comp_anomaly<T: CryptoRngCore>(
     let u_alpha_view : Vec<usize> = u_alpha.iter().map(|v| v-offset).collect();
     let alpha = u_alpha_view.len()-1;
     let l = u-offset;
-    let i_star = find_mpd_i_bigger_than_threshold(mpd_vec_bin, threshold, a);
-    // println!("{:?}", i_star);
-    // println!("{:?}", u_alpha_view);
-    let mut simulate_proofs : Vec<ZKthresholdi> = Vec::with_capacity(a-1);
-    let mut simulate_chal_sum = Scalar::ZERO;
 
-    for i in 0..a{
-        if i != i_star{
-            let (proof_i, chal_i) = simulate_pi_0(&u_alpha_view, &m_bis_vec[i][offset..], h, rng_proof);
-            simulate_proofs.push(proof_i);
-            simulate_chal_sum += chal_i;
+    // ++++ prove i,j ++++
+    let mut proofs : Vec<ZKthresholdi> = Vec::with_capacity(ij_set_length);
+    let mut rr_aggregated : Vec<RistrettoPoint> = Vec::with_capacity(ij_set_length);
+    let mut c_aggregated : Vec<Vec<Scalar>> = Vec::with_capacity(ij_set_length);
+    let mut u_aggregated : Vec<Vec<Scalar>> = Vec::with_capacity(ij_set_length);
+    let mut r_aggregated : Vec<Vec<Scalar>> = Vec::with_capacity(ij_set_length);
+    let mut y_aggregated : Vec<RistrettoPoint> = Vec::with_capacity(ij_set_length);
+    let mut stop_terms: Vec<usize> = Vec::with_capacity(ij_set_length);
+    let mut c_currents: Vec<Scalar> = Vec::with_capacity(ij_set_length);
+    for (i,j) in &ij_set{
+        let (rr_ij, c_ij, u_ij, r_ij, stop_term, c_current) = prove_threshold_ij(d_ij_bis_vec, w_ij_vec, *i, *j, h, a, offset, l, &u_alpha_view, rng_proof);
+        let y_ij : &[RistrettoPoint] = &d_ij_bis_vec[i*a+j][offset..];
+        for rr in rr_ij{
+            rr_aggregated.push(rr);
         }
+        for y in y_ij{
+            y_aggregated.push(*y);
+        }
+        
+        c_aggregated.push(c_ij);
+        u_aggregated.push(u_ij);
+        r_aggregated.push(r_ij);
+        stop_terms.push(stop_term);
+        c_currents.push(c_current);
     }
 
+
+    let chal = chal_list(
+        &rr_aggregated,
+        &y_aggregated,
+        &vec![h; ij_set_length*l]
+    );
+
+    // for i in 0..l{
+    //     assert!(c_j_star[i]!=Scalar::ZERO);
+    //     assert!(u_j_star[i]!=Scalar::ZERO);
+    // }
+    let mut ind = 0;
+    for (i,j) in &ij_set{
+        let proof = complete_prove_ij(chal, &w_ij_vec[i*a+j][offset..], (&rr_aggregated[ind*l..ind*l+l]).to_vec(), c_aggregated[ind].clone(), u_aggregated[ind].clone(), r_aggregated[ind].clone(), stop_terms[ind], c_currents[ind], l, alpha, &u_alpha_view);
+        proofs.push(proof.clone());
+        ind += 1;
+    }
+    
+    return proofs;
+
+}
+
+pub fn prove_threshold_ij<T: CryptoRngCore>(
+    m_bis_vec : &[&[RistrettoPoint]],
+    z_vec: &[&[Scalar]],
+    i_star: usize,
+    j_star: usize,
+    h: RistrettoPoint,
+    a: usize,
+    offset: usize,
+    l: usize,
+    u_alpha_view: &[usize],
+    rng_proof: &mut T
+)->(Vec<RistrettoPoint>, Vec<Scalar>, Vec<Scalar>, Vec<Scalar>, usize, Scalar){
+    let alpha = u_alpha_view.len()-1;
     // ij_star
-    let m_i_star = m_bis_vec[i_star];
+    let m_i_star = m_bis_vec[i_star*a+j_star];
     let m_i_star_view : &[RistrettoPoint] = &m_i_star[offset..];
-    let z_i_star = z_vec[i_star];
+    let z_i_star = z_vec[i_star*a+j_star];
     let z_i_star_view : &[Scalar] = &z_i_star[offset..];
 
     let mut r_j_star : Vec<Scalar> = vec![Scalar::ZERO; l];
@@ -169,41 +202,24 @@ pub fn prove_comp_anomaly<T: CryptoRngCore>(
                 rr_j_star[i] = u_j_star[i] * h - c_j_star[i] * m_i_star_view[i];
                 cursor += 1;
             }
-            
         }
     }
-    
-    // aggregate rr the same way as verifier
-    let mut rr_agg = Vec::with_capacity(a * l);
-    let mut y_agg  = Vec::with_capacity(a * l);
+    (rr_j_star, c_j_star, u_j_star, r_j_star, stop_term, c_current_right)
+}
 
-    let mut buf = 0;
-    for i in 0..a {
-        if i == i_star {
-            for x in &rr_j_star {
-                rr_agg.push(*x);
-            }
-        } else {
-            for x in &simulate_proofs[buf].commitments {
-                rr_agg.push(*x);
-            }
-            buf += 1;
-        }
-
-        for d_ij in &m_bis_vec[i][offset..] {
-            y_agg.push(*d_ij);
-        }
-    }
-
-    let chal = chal_list(
-        &rr_agg,
-        &y_agg,
-        &vec![h; a * l]
-    );
-
-    // deduce chal_j_star
-    let chal_ij_star = chal - simulate_chal_sum;
-
+pub fn complete_prove_ij(
+    chal_ij_star: Scalar,
+    w_i_star_view: &[Scalar],
+    mut rr_j_star: Vec<RistrettoPoint>,
+    mut c_j_star: Vec<Scalar>,
+    mut u_j_star: Vec<Scalar>,
+    mut r_j_star: Vec<Scalar>,
+    stop_term: usize,
+    c_current_right : Scalar,
+    l: usize,
+    alpha: usize,
+    u_alpha_view: &[usize]
+)->ZKthresholdi{
     // calculate c and u for the proved term for ij_star
     if stop_term == 0{
         let mut c_current = chal_ij_star;
@@ -215,7 +231,7 @@ pub fn prove_comp_anomaly<T: CryptoRngCore>(
             }
             else{
                 c_j_star[i] = c_current;
-                u_j_star[i] = r_j_star[i] + c_j_star[i] * z_i_star_view[i];
+                u_j_star[i] = r_j_star[i] + c_j_star[i] * w_i_star_view[i];
             }
         }
     }else{
@@ -230,36 +246,19 @@ pub fn prove_comp_anomaly<T: CryptoRngCore>(
             else{
                 // println!("{:?}", c_current == chal_ij_star);
                 c_j_star[i] = c_current;
-                u_j_star[i] = r_j_star[i] + c_j_star[i] * z_i_star_view[i];
+                u_j_star[i] = r_j_star[i] + c_j_star[i] * w_i_star_view[i];
             }
         }
         c_j_star[stop_term] = c_current - c_current_right;
-        u_j_star[stop_term] = r_j_star[stop_term] + c_j_star[stop_term] * z_i_star_view[stop_term];
-    }
-    // for i in 0..l{
-    //     assert!(c_j_star[i]!=Scalar::ZERO);
-    //     assert!(u_j_star[i]!=Scalar::ZERO);
-    // }
-
-    let proof_i_star = ZKthresholdi{commitments: rr_j_star, challenges: c_j_star, responses: u_j_star};
-    let mut proofs : Vec<ZKthresholdi> = Vec::with_capacity(a);
-
-    let mut buffer = 0;
-    for i in 0..a{
-        if i==i_star{
-            proofs.push(proof_i_star.clone());
-        }
-        else{
-            proofs.push(simulate_proofs[buffer].clone());
-            buffer += 1;
-        }
+        u_j_star[stop_term] = r_j_star[stop_term] + c_j_star[stop_term] * w_i_star_view[stop_term];
     }
     
-    return proofs;
-
+    let proof = ZKthresholdi{commitments: rr_j_star, challenges: c_j_star, responses: u_j_star};
+    proof
 }
 
-pub fn verify_anomaly(
+
+pub fn verify_no_similarity(
     n: usize,
     m: usize,
     u: usize,
@@ -269,6 +268,7 @@ pub fn verify_anomaly(
     threshold: Scalar
 )->bool{
     let a = n-m+1;
+    let ij_set = possible_ij_set(n, m);
     let epsilon_bin_val = scalar_to_bits(&threshold, u);
     let mut u_alpha : Vec<usize> = Vec::with_capacity(u);
     for bit in 0..u{
@@ -290,9 +290,9 @@ pub fn verify_anomaly(
 
     let mut chal_aggregated = Scalar::ZERO;
 
-    for i in 0..a{
+    for (i,j) in &ij_set{
         proof_ij = proofs[cursor].clone();
-        y_ij = y[i].clone();
+        y_ij = y[i*a+j].clone();
         let y_ij_view = &y_ij[offset..];
 
         let rr = &proof_ij.commitments;
@@ -321,7 +321,16 @@ pub fn verify_anomaly(
             }
         }
         let chal_ij = c_current;
-        chal_aggregated += chal_ij;
+        if chal_aggregated == Scalar::ZERO{
+            chal_aggregated = chal_ij;
+        }
+        else{
+            let chal_ij_verify = chal_aggregated == chal_ij;
+            if chal_ij_verify == false{
+                println!("Challenge verify not equal for i = {}, j={}", i, j);
+                res &= chal_ij_verify;
+            }
+        }
         cursor += 1;
     }
 
@@ -329,27 +338,27 @@ pub fn verify_anomaly(
     let mut y_agg  = Vec::with_capacity(a * l);
 
     let mut buf = 0;
-    for i in 0..a {
+    for (i, j) in &ij_set {
         let proof = proofs[buf].clone();
         let rr = proof.commitments;
         for x in &rr {
             rr_agg.push(*x);
         }
 
-        for d_ij in &y[i][offset..] {
+        for d_ij in &y[i*a+j][offset..] {
             y_agg.push(*d_ij);
         }
         buf += 1;
     }
 
-    let chal = chal_list(&rr_agg.clone(), &y_agg.clone(), &vec![h; a*l]);
+    let chal = chal_list(&rr_agg.clone(), &y_agg.clone(), &vec![h; ij_set.len()*l]);
     let res_chal = chal == chal_aggregated;
     res &= res_chal;
-    // println!("challenge sum verified ? {}", res_chal);
+    println!("challenge sum verified ? {}", res_chal);
     res
 }
 
-pub fn measure_time_comp_anomaly(
+pub fn measure_time_comp_no_similarity(
     upper: usize,
     n: usize,   // length of time series
     m: usize,   // window size
@@ -382,23 +391,24 @@ pub fn measure_time_comp_anomaly(
         // --- 3) Commit original time series --------
         let commitment = commit(&mut set, &ts.to_vec(), &mut rng_k);
         
-        // --- 4) Commit MPD --------
-        let mpd      = compute_mpd_with_window_scalar(&ts, m);
-        let mpd_bin: Vec<Vec<Scalar>> = mpd.iter().map(|x| scalar_to_bits(x, u)).collect();
-        let (m_vec, m_bis_vec, z_vec) = calculate_mpd_commit(&g, &h, mpd_bin, u, &mut rng_proof);
+        let (_, _, x_diff, k_diff, k_tilde) = calculate_inner_diff_commit(&commitment, &set, &mut rng_proof);
+        
+        let _t1 = Instant::now();
+        let (_, d_vec_bis, w_vec, _, _) = calculate_dist_commit(&mut rng_proof, n, m, u, g, h, &x_diff, &k_diff, &k_tilde);
 
-        let m_bis_vec_refs: Vec<&[RistrettoPoint]> = m_bis_vec.iter().map(|x| x.as_slice()).collect();
-        let z_vec_refs: Vec<&[Scalar]> = z_vec.iter().map(|inner| inner.as_slice()).collect();
+
+        let d_bis_vec_refs: Vec<&[RistrettoPoint]> =d_vec_bis.iter().map(|x| x.as_slice()).collect();
+        let w_vec_refs: Vec<&[Scalar]> = w_vec.iter().map(|inner| inner.as_slice()).collect();
 
         // --- 12) Proof threshold time --------------
         let t2 = Instant::now();
-        let proofs = prove_comp_anomaly(threshold, mpd, n, m, u, &m_bis_vec_refs, &z_vec_refs, h, &mut rng_proof);
+        let proofs = prove_comp_no_sim(threshold, n, m, u, &d_bis_vec_refs, &w_vec_refs, h, &mut rng_proof);
         let duration_proof_threshold = t2.elapsed();
         time_proof_threshold += duration_proof_threshold;
         println! ("Proof Threshold : {:?}", duration_proof_threshold);
 
         let t3 = Instant::now();
-        let res = verify_anomaly(n, m, u, &proofs, &m_bis_vec_refs, h, threshold);
+        let res = verify_no_similarity(n, m, u, &proofs, &d_bis_vec_refs, h, threshold);
         let duration_verify_threshold = t3.elapsed();
         time_verify_threshold += duration_verify_threshold; 
         println! ("Verify Threshold : {:?}", duration_verify_threshold);
