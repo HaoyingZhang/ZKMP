@@ -102,6 +102,22 @@ pub fn chal_distance(
     return hash(prehash)
 }
 
+pub fn chal_proof_extraction(
+    r1: &RistrettoPoint,
+    s1: &RistrettoPoint,
+    cij: &RistrettoPoint, 
+    g: &RistrettoPoint, 
+    h: &RistrettoPoint
+) -> Scalar{
+    let mut prehash: Vec<[u8;32]> = Vec::new();  
+    prehash.push(*(r1.compress()).as_bytes());
+    prehash.push(*(s1.compress()).as_bytes());
+    prehash.push(*(cij.compress()).as_bytes());
+    prehash.push(*(g.compress()).as_bytes());
+    prehash.push(*(h.compress()).as_bytes());
+    return hash(prehash)
+}
+
 pub fn chal_list(
     r: &[RistrettoPoint],
     y: &[RistrettoPoint],

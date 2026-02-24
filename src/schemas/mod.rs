@@ -11,3 +11,4 @@ pub mod scenarios;
 // pub mod threshold_bis;
 pub mod threshold_bis_no_sim;
 pub mod comp_bis_ano;
+pub mod extraction;

@@ -40,6 +40,13 @@ pub struct ProofSquareij{
     pub v2: Scalar
 }
 
+pub struct ProofExtraction{
+    pub r_1: RistrettoPoint,
+    pub s_1: RistrettoPoint,
+    pub u: Scalar,
+    pub v: Scalar,
+}
+
 pub struct ProofDistanceiju{
     pub r_1: RistrettoPoint,
     pub r_2: RistrettoPoint,

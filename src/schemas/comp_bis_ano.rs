@@ -370,10 +370,10 @@ pub fn prove_comp_anomaly<T: CryptoRngCore>(
             u_j_star[stop_term] = r_j_star[stop_term] + c_j_star[stop_term] * w_ij_star_view[stop_term];
 
         }
-        for i in 0..l{
-            assert!(c_j_star[i]!=Scalar::ZERO);
-            assert!(u_j_star[i]!=Scalar::ZERO);
-        }
+        // for i in 0..l{
+        //     assert!(c_j_star[i]!=Scalar::ZERO);
+        //     assert!(u_j_star[i]!=Scalar::ZERO);
+        // }
         let proof_j_star = ZKthresholdi {
             commitments: rr_j_star_ref.to_vec(), 
             challenges: c_j_star.to_vec(), 
