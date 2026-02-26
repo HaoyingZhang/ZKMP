@@ -16,6 +16,7 @@ use zkmp::scenarios::*;
 use zkmp::commit::*;
 use zkmp::threshold_bis_no_sim::*;
 use zkmp::comp_bis_ano::*;
+use zkmp::extraction::*;
 
 
 fn main() {
@@ -24,14 +25,16 @@ fn main() {
     let mut rng_k = OsRng;
     let mut rng_proof_square = OsRng;
 
-    let n: usize = 200;
+    let n: usize = 1000;
     let upper: usize = 45;
     let u: usize = 15; // u=13, u=15 and u=20
-    let m: usize = 10;
+    let m: usize = 100;
     let l = n.checked_sub(m).and_then(|x| x.checked_add(1)).expect("n must be >= m - 1");
-    let iter: usize = 10;
-    let threshold_anomaly = 21000;
+    let iter: usize = 1;
+    let threshold_anomaly = 210000;
     let threshold_similarity = 50;
+
+    // measure_time_proof_extraction(upper, n, m, iter);
 
     // measure_signature(upper, n, iter);
 
@@ -44,7 +47,7 @@ fn main() {
     
     // measure_time_similarity(upper, n, m, u, iter, threshold_similarity);
 
-    // measure_time_proof_square(upper,n, m, iter);
+    measure_time_proof_square(upper,n, m, iter);
 
     // measure_time_proof_distance(upper,n,m,u,iter);
 
@@ -56,7 +59,7 @@ fn main() {
 
     // measure_time_threshold(upper, n, m, u, iter, threshold_similarity);
 
-    measure_time_comp(upper, n, m, u, iter, threshold_anomaly);
+    // measure_time_comp(upper, n, m, u, iter, threshold_anomaly);
 
     // measure_time_comp_similarity(upper, n, m, u, iter, threshold_similarity);
 

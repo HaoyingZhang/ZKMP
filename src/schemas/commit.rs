@@ -69,7 +69,13 @@ pub fn calculate_inner_diff_commit<T: CryptoRng + RngCore>(
     
     for i in 0..n{
         for j in 0..n{
-            let c_ij = c_pub[i] - c_pub[j];
+            let mut c_ij = RistrettoPoint::identity();
+            if j < i {
+                c_ij = c_diff[j * n + i]; // c_ij = c_ji
+            }
+            else{
+                c_ij = c_pub[i] - c_pub[j];
+            }
             let x_ij = x[i] - x[j];
             let k_ij = k[i] - k[j];
             let k_ij_tilde = k_tilde[i*n+j];
