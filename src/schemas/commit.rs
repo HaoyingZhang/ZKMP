@@ -65,26 +65,34 @@ pub fn calculate_inner_diff_commit<T: CryptoRng + RngCore>(
     let mut c_tilde : Vec<RistrettoPoint> = Vec::with_capacity(n*n);
     let mut x_diff: Vec<Scalar> = Vec::with_capacity(n*n);
     let mut k_diff: Vec<Scalar> = Vec::with_capacity(n*n);
-    let k_tilde = random_vec_scalar(rng, n*n);
+    let mut k_tilde: Vec<Scalar> = Vec::with_capacity(n*n);
     
     for i in 0..n{
         for j in 0..n{
             let mut c_ij = RistrettoPoint::identity();
+            let mut x_ij = Scalar::ZERO;
+            let mut k_ij = Scalar::ZERO;
+            let mut k_ij_tilde = Scalar::ZERO;
+            let mut c_ij_tilde = RistrettoPoint::identity();
             if j < i {
                 c_ij = c_diff[j * n + i]; // c_ij = c_ji
+                x_ij = x_diff[j * n + i];
+                k_ij = k_diff[j * n + i];
+                k_ij_tilde = k_tilde[j * n + i];
+                c_ij_tilde = c_tilde[j * n + i];
             }
             else{
                 c_ij = c_pub[i] - c_pub[j];
+                x_ij = x[i] - x[j];
+                k_ij = k[i] - k[j];
+                k_ij_tilde = random_scalar(rng);
+                c_ij_tilde = x_ij * c_ij + k_ij_tilde * h;
             }
-            let x_ij = x[i] - x[j];
-            let k_ij = k[i] - k[j];
-            let k_ij_tilde = k_tilde[i*n+j];
-            let c_ij_tilde = x_ij * c_ij + k_ij_tilde * h;
-
             c_tilde.push(c_ij_tilde);
             x_diff.push(x_ij);
             k_diff.push(k_ij);
             c_diff.push(c_ij);
+            k_tilde.push(k_ij_tilde);
         }
     }
     (c_diff, c_tilde, x_diff, k_diff, k_tilde)
