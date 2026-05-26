@@ -1,6 +1,7 @@
 use rand::rngs::OsRng;
 use rand_core::{ CryptoRng, RngCore, CryptoRngCore };   
-use std::time::{ Instant, Duration }; 
+use std::time::{ Instant, Duration };
+use std::io::Write;
 use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
 use zeroize::Zeroize;
 use crate::usefulstructs::*;
@@ -199,7 +200,27 @@ pub fn measure_time_proof_square(
 
         let duration_proof = start_proof.elapsed();
         time_p_square += duration_proof;
-        
+
+        // Export proofs to file on first iteration to inspect size
+        if _i == 0 {
+            std::fs::create_dir_all("proofs_script").unwrap();
+            let mut file = std::fs::File::create("proofs_script/proofs_square.bin").expect("failed to create proofs file");
+            for opt in &p_square {
+                if let Some(p) = opt {
+                    file.write_all(p.r_1.compress().as_bytes()).unwrap();
+                    file.write_all(p.r_2.compress().as_bytes()).unwrap();
+                    file.write_all(p.s_1.compress().as_bytes()).unwrap();
+                    file.write_all(p.s_2.compress().as_bytes()).unwrap();
+                    file.write_all(p.u.as_bytes()).unwrap();
+                    file.write_all(p.v1.as_bytes()).unwrap();
+                    file.write_all(p.v2.as_bytes()).unwrap();
+                }
+            }
+            drop(file);
+            let size = std::fs::metadata("proofs_script/proofs_square.bin").unwrap().len();
+            println!("proofs_square.bin size: {} bytes ({:.2} KB)", size, size as f64 / 1024.0);
+        }
+
         // Verify proof of square :
         let start_verify = Instant::now();
         let res = verify_square(

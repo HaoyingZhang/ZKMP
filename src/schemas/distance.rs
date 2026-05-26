@@ -1,6 +1,7 @@
 use rand::rngs::OsRng;
 use rand_core::{ CryptoRng, RngCore, CryptoRngCore };   
-use std::time::{ Instant, Duration }; 
+use std::time::{ Instant, Duration };
+use std::io::Write;
 use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
 use zeroize::Zeroize;
 use crate::usefulstructs::*;
@@ -174,8 +175,8 @@ pub fn measure_time_proof_distance(
     let mut time_commit             = Duration::ZERO;
     let mut time_proof_distance     = Duration::ZERO;
     let mut time_verify_distance    = Duration::ZERO;
-
-    for _ in 0..iter {
+    let mut counter : usize;
+    for counter in 0..iter {
         // RNGs
         let mut rng = OsRng;
         let mut rng_k = OsRng;
@@ -209,7 +210,26 @@ pub fn measure_time_proof_distance(
         // --- Proof (distance) ---
         let t2 = Instant::now();
         let proofs_owned = proof_distance(n, m, u, &set, &c_vec_refs, &c_bis_vec_refs, &w_refs, &mut rng_proof);
+        
         time_proof_distance += t2.elapsed();
+
+        if counter == 0 {
+            std::fs::create_dir_all("proofs_script").unwrap();
+            let mut file = std::fs::File::create("proofs_script/proofs_distance.bin").expect("failed to create proofs file");
+            for inner in &proofs_owned {
+                for p in inner {
+                    file.write_all(p.r_1.compress().as_bytes()).unwrap();
+                    file.write_all(p.r_2.compress().as_bytes()).unwrap();
+                    file.write_all(p.c_1.as_bytes()).unwrap();
+                    file.write_all(p.c_2.as_bytes()).unwrap();
+                    file.write_all(p.response_1.as_bytes()).unwrap();
+                    file.write_all(p.response_2.as_bytes()).unwrap();
+                }
+            }
+            drop(file);
+            let size = std::fs::metadata("proofs_script/proofs_distance.bin").unwrap().len();
+            println!("proofs_script/proofs_distance.bin size: {} bytes ({:.2} KB)", size, size as f64 / 1024.0);
+        }
 
         // Convert owned Vec<Vec<_>> -> borrowed Vec<&[_]>
         let proofs_borrowed: Vec<&[ProofDistanceiju]> = proofs_owned.iter().map(|opt| opt.as_slice()).collect();

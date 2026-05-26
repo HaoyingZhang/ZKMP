@@ -13,6 +13,7 @@ use crate::mpd_min::*;
 use crate::threshold::*;
 use crate::comp::*;
 use crate::commit::*;
+use std::io::Write;
 
 pub fn possible_ij_set(n: usize, m: usize) -> Vec<(usize, usize)> {
     let a = n - m + 1;       
@@ -413,7 +414,7 @@ pub fn measure_time_comp_similarity(
     let mut time_proof_threshold  = Duration::ZERO;
     let mut time_verify_threshold = Duration::ZERO;
 
-    for _ in 0..iter {
+    for _i in 0..iter {
         let mut rng       = OsRng;
         let mut rng_k     = OsRng;
         let mut rng_proof = OsRng;
@@ -448,6 +449,19 @@ pub fn measure_time_comp_similarity(
 
         let t2 = Instant::now();
         let proofs = prove_comp_similarity(threshold, d_private_vec, n, m, u, &c_vec_refs, &w_refs, h, &mut rng_proof);
+        if _i == 0 {
+            std::fs::create_dir_all("proofs_script").unwrap();
+            let mut file = std::fs::File::create("proofs_script/proofs_comp_sim.bin").expect("failed to create proofs file");
+            for p in &proofs {
+                for c in &p.commitments { file.write_all(c.compress().as_bytes()).unwrap(); }
+                for c in &p.challenges  { file.write_all(c.as_bytes()).unwrap(); }
+                for r in &p.responses   { file.write_all(r.as_bytes()).unwrap(); }
+            }
+            drop(file);
+            let size = std::fs::metadata("proofs_script/proofs_comp_sim.bin").unwrap().len();
+            println!("proofs_script/proofs_comp_sim.bin size: {} bytes ({:.2} KB)", size, size as f64 / 1024.0);
+        }
+        
         let duration_proof_threshold = t2.elapsed();
         time_proof_threshold += duration_proof_threshold;
         println! ("Proof Threshold : {:?}", duration_proof_threshold);

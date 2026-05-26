@@ -5,6 +5,7 @@ use crate::comp_bis::*;
 use crate::usefulstructs::*;
 use crate::usefulfuncs::{random_ecg, random_ristretto_point, random_scalar, chal_single_proof_square, chal_distance, random_vec_scalar, lincomb_pow2, two_pow, scalar_to_bits, compute_mpd_with_window_scalar, chal_list};
 use std::time::{ Instant, Duration }; 
+use std::io::Write;
 
 use crate::square::*;        
 use crate::distance::*;  
@@ -371,7 +372,7 @@ pub fn measure_time_comp_no_similarity(
     let mut time_proof_threshold  = Duration::ZERO;
     let mut time_verify_threshold = Duration::ZERO;
 
-    for _ in 0..iter {
+    for _i in 0..iter {
         let mut rng       = OsRng;
         let mut rng_k     = OsRng;
         let mut rng_proof = OsRng;
@@ -403,6 +404,19 @@ pub fn measure_time_comp_no_similarity(
         // --- 12) Proof threshold time --------------
         let t2 = Instant::now();
         let proofs = prove_comp_no_sim(threshold, n, m, u, &d_bis_vec_refs, &w_vec_refs, h, &mut rng_proof);
+        if _i == 0 {
+            std::fs::create_dir_all("proofs_script").unwrap();
+            let mut file = std::fs::File::create("proofs_script/proofs_comp_non_sim.bin").expect("failed to create proofs file");
+            for p in &proofs {
+                for c in &p.commitments { file.write_all(c.compress().as_bytes()).unwrap(); }
+                for c in &p.challenges  { file.write_all(c.as_bytes()).unwrap(); }
+                for r in &p.responses   { file.write_all(r.as_bytes()).unwrap(); }
+            }
+            drop(file);
+            let size = std::fs::metadata("proofs_script/proofs_comp_non_sim.bin").unwrap().len();
+            println!("proofs_script/proofs_comp_non_sim.bin size: {} bytes ({:.2} KB)", size, size as f64 / 1024.0);
+        }
+
         let duration_proof_threshold = t2.elapsed();
         time_proof_threshold += duration_proof_threshold;
         println! ("Proof Threshold : {:?}", duration_proof_threshold);

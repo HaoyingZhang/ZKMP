@@ -1,6 +1,7 @@
 use rand::rngs::OsRng;
 use rand_core::{ CryptoRng, RngCore, CryptoRngCore };   
-use std::time::{ Instant, Duration }; 
+use std::time::{ Instant, Duration };
+use std::io::Write;
 use curve25519_dalek::{ scalar::Scalar, RistrettoPoint, traits::Identity};
 use zeroize::Zeroize;
 use crate::usefulstructs::*;
@@ -487,7 +488,7 @@ pub fn measure_time_comp(
     let mut time_proof_non_anomaly     = Duration::ZERO;
     let mut time_verify_non_anomaly    = Duration::ZERO;
 
-    for _ in 0..iter {
+    for _i in 0..iter {
         // RNGs
         let mut rng = OsRng;
         let mut rng_k = OsRng;
@@ -524,6 +525,8 @@ pub fn measure_time_comp(
         let a = n - m + 1;
         let half_m = m/2;
         let mut verify_non_anomaly : bool = true;
+        let mut proof_size : u64 = 0;
+
         for i in 0..a {
 
             let t2 = Instant::now();
@@ -559,6 +562,20 @@ pub fn measure_time_comp(
             );
             time_proof_non_anomaly += t2.elapsed();
 
+            if _i == 0 {
+                std::fs::create_dir_all("proofs_script").unwrap();
+                let path = format!("proofs_script/proof_comp_{}.bin", i);
+                let mut file = std::fs::File::create(&path).expect("failed to create proof file");
+                for p in &proof_i {
+                    for c in &p.commitments { file.write_all(c.compress().as_bytes()).unwrap(); }
+                    for c in &p.challenges  { file.write_all(c.as_bytes()).unwrap(); }
+                    for r in &p.responses   { file.write_all(r.as_bytes()).unwrap(); }
+                }
+                drop(file);
+                let size = std::fs::metadata(&path).unwrap().len();
+                proof_size = proof_size + size;
+            }
+
             // --- Verify ---
             let t3 = Instant::now();
             let res = verify_non_anomaly_i(
@@ -571,6 +588,9 @@ pub fn measure_time_comp(
             time_verify_non_anomaly += t3.elapsed();
         }
         println!("verify: {}", verify_non_anomaly);
+        if _i == 0{
+            println!("proof_comp.bin size: {} bytes ({:.2} KB)", proof_size, proof_size as f64 / 1024.0);
+        }
 
     }
     let average_time_setup = time_setup / (iter as u32);

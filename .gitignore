@@ -1,3 +1,4 @@
 plot/
 *.d
 target/*
+*.bin
